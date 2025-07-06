@@ -1,0 +1,9 @@
+.vscode
+__pycache__
+*cache
+*.ini
+outputs*
+/checkpoint
+/data
+/relatedworks
+/tools

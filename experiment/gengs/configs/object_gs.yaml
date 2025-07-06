@@ -1,0 +1,113 @@
+name: "object_gs"
+tag: "${rmspace:${system.prompt_processor.prompt},_}"
+exp_root_dir: "outputs"
+seed: 42
+
+data_type: "random-camera-datamodule"
+data:
+  batch_size: [1, 1, 1]
+  width: [128, 256, 512]
+  height: [128, 256, 512]
+  resolution_milestones: [150, 300]
+  camera_distance_range: [2.5, 2.5]
+  fovy_range: [49., 49.]
+  elevation_range: [-30., 30.]
+  camera_perturb: 0.0
+  center_perturb: 0.0
+  up_perturb: 0.0
+  eval_elevation_deg: 0.0
+  eval_camera_distance: 2.5
+  eval_fovy_deg: 49.
+
+system_type: "layout2gs-system"
+system:
+  mode: "appearance"
+
+  geometry_type: "gaussian-model"
+  geometry:
+    init_strategy: "from_sampling"
+    init_point_strategy: "random_ball"
+    init_num_points: 1000
+    radius: 0.5
+    densify_grad_threshold: 0.01
+    opacity_threshold: 0.01
+    view_size_threshold: 0.0
+    world_size_threshold: 0.4
+    percent_dense: 0.04
+    densify_until_step: 500
+    use_sh: true
+    sh_degree: 0
+
+  material_type: "no-material" # unused
+
+  background_type: "no-background"
+  background:
+    color_strategy: "random_flip"
+
+  renderer_type: "gaussian-splatting-rasterizer"
+  renderer:
+    depth_type: 'norm_radius'
+    depth_norm_radius: 1.732
+    depth_blending: false
+
+  prompt_processor_type: "stable-diffusion-prompt-processor"
+  prompt_processor:
+    pretrained_model_name_or_path: "stabilityai/stable-diffusion-2-1-base"
+    prompt: ???
+    
+  guidance_type: "stable-diffusion-guidance"
+  guidance:
+    pretrained_model_name_or_path: "stabilityai/stable-diffusion-2-1-base"
+    guidance_scale: 100.
+    weighting_strategy: sds
+    min_step_percent: [0, 0.98, 0.02, 500]
+    max_step_percent: [0, 0.98, 0.02, 500]
+    view_dependent_prompting: true
+
+  freq:
+    guidance_eval: 100
+
+  loggers:
+    wandb:
+      enable: false
+      project: "threestudio"
+      name: None
+
+  loss:
+    lambda_sds: 1.
+
+  optimizer:
+    name: Adam
+    args:
+      lr: 0.0
+      eps: 1.e-15
+    params:
+      geometry._xyz:
+        lr: 0.01
+      geometry._features_dc:
+        lr: 0.01
+      geometry._features_rest:
+        lr: 0.0005 # Note: ${system.optimizer.params.geometry._features_dc.lr} / 20.
+      geometry._scaling:
+        lr: 0.005
+      geometry._rotation:
+        lr: 0.005
+      geometry._opacity:
+        lr: 0.05
+    _xyz_lr_schedule:
+      lr_init: 0.01
+      lr_final: 0.0002
+      lr_delay_mult: 0.02
+      lr_max_steps: 300
+
+trainer:
+  max_steps: 500
+  log_every_n_steps: 1
+  num_sanity_val_steps: 0
+  val_check_interval: 100
+  enable_progress_bar: true
+
+checkpoint:
+  save_last: true # save at each validation time
+  save_top_k: -1
+  every_n_train_steps: ${trainer.max_steps}

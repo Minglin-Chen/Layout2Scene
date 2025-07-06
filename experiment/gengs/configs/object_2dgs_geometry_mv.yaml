@@ -1,0 +1,144 @@
+name: "object_2dgs_geometry_mv"
+tag: "${rmspace:${system.geometry_prompt_processor.prompt},_}"
+exp_root_dir: "outputs"
+seed: 42
+
+data_type: "random-multiview-camera-datamodule"
+data:
+  batch_size: [1, 1, 1]
+  width: [128, 256, 512]
+  height: [128, 256, 512]
+  resolution_milestones: [300, 600]
+  camera_distance_range: [0.8, 1.0]
+  relative_distance: true
+  fovy_range: [40., 45.]
+  elevation_range: [-30., 30.]
+  camera_perturb: 0.0
+  center_perturb: 0.0
+  up_perturb: 0.0
+  eval_elevation_deg: 15.
+  eval_camera_distance: 3.0
+  eval_fovy_deg: 45.
+  n_view: 4
+
+system_type: "layout2gs-system"
+system:
+  mode: "geometry"
+  
+  # latent_steps: ${trainer.max_steps}
+  geometry_latent_steps: ${trainer.max_steps}
+
+  geometry_type: "gaussian-model"
+  geometry:
+    is_2dgs: true
+    init_strategy: "from_sampling"
+    init_point_strategy: "random_ball"
+    init_num_points: 1000
+    radius: 0.1
+    densify_grad_threshold: 0.01
+    opacity_threshold: 0.01
+    view_size_threshold: 0.0
+    world_size_threshold: 0.4
+    percent_dense: 0.04
+    densify_until_step: 1000
+    densify_interval: 100
+    use_sh: true
+    sh_degree: 0
+
+  material_type: "no-material" # unused
+
+  background_type: "no-background"
+  background:
+    color_strategy: "random_flip"
+
+  renderer_type: "gaussian-splatting-2d-rasterizer"
+  renderer:
+    depth_type: 'norm_radius'
+    depth_norm_radius: 1.732
+    depth_blending: false
+
+  # stable diffusion
+  # prompt_processor_type: "stable-diffusion-prompt-processor"
+  # prompt_processor:
+  #   pretrained_model_name_or_path: "stabilityai/stable-diffusion-2-1-base"
+  #   prompt: ???
+    
+  # guidance_type: "stable-diffusion-guidance"
+  # guidance:
+  #   pretrained_model_name_or_path: "stabilityai/stable-diffusion-2-1-base"
+  #   guidance_scale: 50.
+  #   weighting_strategy: fantasia3d
+  #   min_step_percent: [0, 0.98, 0.02, 800]
+  #   max_step_percent: [0, 0.98, 0.02, 800]
+  #   view_dependent_prompting: true
+
+  # multiview normal-depth diffusion
+  geometry_prompt_processor_type: "stable-diffusion-prompt-processor"
+  geometry_prompt_processor:
+    pretrained_model_name_or_path: "runwayml/stable-diffusion-v1-5"
+    prompt: ???
+    negative_prompt: "low quality"
+
+  geometry_guidance_type: "multiview-nddiffusion-guidance"
+  geometry_guidance:
+    pretrained_config: "nddiffusion/configs/txtcond_mvsd-4-objaverse_finetune_wovae.yaml"
+    pretrained_model_name_or_path: "nddiffusion/ckpt/nd_mv_ema.ckpt"
+    clip_pretrained_model_name_or_path: "openai/clip-vit-large-patch14"
+    n_view: ${data.n_view}
+    rotate_z: true
+    guidance_scale: 50.
+    weighting_strategy: fantasia3d
+    min_step_percent: [0, 0.98, 0.02, 800]
+    max_step_percent: [0, 0.98, 0.02, 800]
+    view_dependent_prompting: false
+    use_img_loss: false
+
+  freq:
+    guidance_eval: 100
+
+  loggers:
+    wandb:
+      enable: false
+      project: "threestudio"
+      name: None
+
+  loss:
+    # lambda_sds: 0.
+    lambda_geometry_sds: 1.
+    lambda_geometry_sds_img: 0.
+
+  optimizer:
+    name: Adam
+    args:
+      lr: 0.0
+      eps: 1.e-15
+    params:
+      geometry._xyz:
+        lr: 0.01
+      geometry._features_dc:
+        lr: 0.0
+      geometry._features_rest:
+        lr: 0.0 # Note: ${system.optimizer.params.geometry._features_dc.lr} / 20.
+      geometry._scaling:
+        lr: 0.005
+      geometry._rotation:
+        lr: 0.005
+      geometry._opacity:
+        lr: 0.05
+    _xyz_lr_schedule:
+      lr_init: 0.01
+      lr_final: 0.0002
+      lr_delay_mult: 0.02
+      lr_max_steps: 600
+
+trainer:
+  max_steps: 1000
+  log_every_n_steps: 1
+  num_sanity_val_steps: 0
+  val_check_interval: 100
+  enable_progress_bar: true
+
+checkpoint:
+  save_last: true # save at each validation time
+  save_top_k: -1
+  every_n_train_steps: ${trainer.max_steps}
