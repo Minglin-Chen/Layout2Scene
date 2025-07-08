@@ -52,6 +52,7 @@ class GaussianModel(BaseExplicitGeometry):
         densify_interval: int           = 50
         opacity_reset_interval: int     = -1
 
+        normalize_grad: bool            = True
         densify_grad_threshold: float   = 0.01   
         opacity_threshold: float        = 0.01
         view_size_threshold: float      = 0.0
@@ -108,7 +109,7 @@ class GaussianModel(BaseExplicitGeometry):
         self._opacity           = nn.Parameter(opacity, requires_grad=True)             # (N,1)
 
         self._semantic          = nn.Parameter(semantic, requires_grad=False)           # (N,3)
-        self._instance          = nn.Parameter(instance, requires_grad=False)           # (N,3)
+        self._instance          = nn.Parameter(instance, requires_grad=False)           # (N,1)
         self.instance_location  = nn.Parameter(instance_location, requires_grad=False)  # (K,3)
         self.instance_size      = nn.Parameter(instance_size, requires_grad=False)      # (K,3)
         self.instance_rotation  = nn.Parameter(instance_rotation, requires_grad=False)  # (K,3)
@@ -619,10 +620,22 @@ class GaussianModel(BaseExplicitGeometry):
                 optimizable_tensors[group["name"].split('.')[-1]] = group["params"][0]
         return optimizable_tensors
 
-    def add_densification_stats(self, viewspace_points, radii, visibility_filter):
-        self.xyz_grad_accum[visibility_filter]  += torch.norm(viewspace_points.grad[visibility_filter], dim=-1, keepdim=False)
-        self.denom[visibility_filter]           += 1
-        self.max_radii2D[visibility_filter]     = torch.max(self.max_radii2D[visibility_filter], radii[visibility_filter])
+    def add_densification_stats(self, viewspace_points, radii, image_size):
+        grads = viewspace_points.absgrad.clone() if hasattr(viewspace_points, 'absgrad') else \
+                viewspace_points.grad.clone()
+        
+        if self.cfg.normalize_grad:
+            n_cam, height, width = grads.shape[0], *image_size
+            grads[..., 0] *= height / 2.0 * n_cam
+            grads[..., 1] *= width / 2.0 * n_cam
+
+        selected    = radii > 0.                # (n_cam, n_point)
+        gs_ids      = torch.where(selected)[1]  # (nnz)
+        grads       = grads[selected]           # (nnz, 2 or 3)
+
+        self.xyz_grad_accum.index_add_(0, gs_ids, grads.norm(dim=-1))
+        self.denom.index_add_(0, gs_ids, torch.ones_like(gs_ids, dtype=torch.float32))
+        self.max_radii2D[gs_ids] = torch.maximum(self.max_radii2D[gs_ids], radii[selected])
 
     def prune_points(self, optimizer, prune_mask):
         valid_mask          = ~prune_mask
@@ -743,7 +756,7 @@ class GaussianModel(BaseExplicitGeometry):
 
     def _densify_and_clone(self, optimizer, xyz_grad_avg):
         selected = torch.where(xyz_grad_avg >= self.cfg.densify_grad_threshold, True, False)
-        selected = torch.logical_and(selected, torch.max(self.get_scaling, dim=-1).values <= self.cfg.percent_dense)
+        selected = torch.logical_and(selected, self.get_scaling.max(dim=-1).values <= self.cfg.percent_dense)
 
         new_xyz             = self._xyz[selected]
         new_features_dc     = self._features_dc[selected]
@@ -777,7 +790,7 @@ class GaussianModel(BaseExplicitGeometry):
         padded_xyz_grad_avg[:xyz_grad_avg.shape[0]] = xyz_grad_avg
 
         selected = torch.where(padded_xyz_grad_avg >= self.cfg.densify_grad_threshold, True, False)
-        selected = torch.logical_and(selected, torch.max(self.get_scaling, dim=-1).values > self.cfg.percent_dense)
+        selected = torch.logical_and(selected, self.get_scaling.max(dim=-1).values > self.cfg.percent_dense)
 
         stds    = self.get_scaling[selected].repeat(N,1)
         if self.cfg.is_2dgs:
@@ -816,8 +829,7 @@ class GaussianModel(BaseExplicitGeometry):
         self.prune_points(optimizer, prune_mask)
 
     def _densify_and_prune(self, optimizer):
-        xyz_grad_avg = self.xyz_grad_accum / self.denom
-        xyz_grad_avg[xyz_grad_avg.isnan()] = 0.0
+        xyz_grad_avg = self.xyz_grad_accum / self.denom.clamp_min(1)
 
         self._densify_and_clone(optimizer, xyz_grad_avg)
         self._densify_and_split(optimizer, xyz_grad_avg)
@@ -853,12 +865,11 @@ class GaussianModel(BaseExplicitGeometry):
         torch.cuda.empty_cache()
 
     @torch.no_grad()
-    def update(self, true_global_step, optimizer, viewspace_points, radii, visibility_filter):
-
+    def update(self, true_global_step, optimizer, viewspace_points, radii, image_sizes):
         if (self.cfg.densify_until_step < 0) or (true_global_step < self.cfg.densify_until_step):
-            for _viewspace_points, _radii, _visibility_filter in zip(viewspace_points, radii, visibility_filter):
+            for _viewspace_points, _radii, _image_size in zip(viewspace_points, radii, image_sizes):
                 if _viewspace_points.grad is None: continue
-                self.add_densification_stats(_viewspace_points, _radii, _visibility_filter)
+                self.add_densification_stats(_viewspace_points, _radii, _image_size)
 
             # densify and prune
             if true_global_step > self.cfg.densify_from_step:
