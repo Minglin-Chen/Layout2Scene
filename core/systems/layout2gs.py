@@ -66,6 +66,13 @@ class Layout2GS(BaseLift3DSystem):
                 self.cfg.layout_renderer
             )
 
+    def configure_optimizers(self):
+        # learning rate schedule
+        if self.is_gaussian_geometry:
+            self.geometry.configure_schedulers(self.cfg.optimizer)
+            
+        return super().configure_optimizers()
+
     def forward(self, batch: Dict[str, Any]) -> Dict[str, Any]:
         render_out = self.renderer(**batch)
         if self.layout_renderer is not None: 
@@ -145,43 +152,7 @@ class Layout2GS(BaseLift3DSystem):
             # inspect the initialized point cloud
             # pointcloud_init_path = self.get_save_path(os.path.join('export', 'pointcloud_init.ply'))
             # self.geometry.export(pointcloud_init_path, fmt='pointcloud')
-
-            # learning rate schedule
-            def _get_lr_func(param_name):
-                attr = f'{param_name}_lr_schedule'
-                if not hasattr(self.cfg.optimizer, attr): return None
-                cfg_lr_schedule = getattr(self.cfg.optimizer, attr)
-                lr_init         = cfg_lr_schedule.lr_init
-                lr_final        = cfg_lr_schedule.lr_final
-                lr_delay_steps  = getattr(cfg_lr_schedule, 'lr_delay_steps', 0)
-                lr_delay_mult   = getattr(cfg_lr_schedule, 'lr_delay_mult', 1)
-                lr_max_steps    = getattr(cfg_lr_schedule, 'lr_max_steps', 1000000)
-
-                def expon_lr_func(step):
-                    """ from 3DGS """
-                    if step < 0 or (lr_init == 0.0 and lr_final == 0.0):
-                        # Disable this parameter
-                        return 0.0
-                    if lr_delay_steps > 0:
-                        # A kind of reverse cosine decay.
-                        delay_rate = lr_delay_mult + (1 - lr_delay_mult) * np.sin(
-                            0.5 * np.pi * np.clip(step / lr_delay_steps, 0, 1)
-                        )
-                    else:
-                        delay_rate = 1.0
-                    t = np.clip(step / lr_max_steps, 0, 1)
-                    log_lerp = np.exp(np.log(lr_init) * (1 - t) + np.log(lr_final) * t)
-                    return delay_rate * log_lerp
-
-                return expon_lr_func
-
-            self._xyz_lr_func           = _get_lr_func('_xyz')
-            self._features_dc_lr_func   = _get_lr_func('_features_dc')
-            self._features_rest_lr_func = _get_lr_func('_features_rest')
-            self._scaling_lr_func       = _get_lr_func('_scaling')
-            self._rotation_lr_func      = _get_lr_func('_rotation')
-            self._opacity_lr_func       = _get_lr_func('_opacity')
-            self.background_lr_func     = _get_lr_func('background')
+            pass
 
     def training_step(self, batch):
         # rendering
@@ -196,14 +167,14 @@ class Layout2GS(BaseLift3DSystem):
         out_local   = self(batch_local) if local else None
         
         if self.is_gaussian_geometry:
-            self.viewspace_points       = out['viewspace_points']
-            self.radii                  = out['radii']
-            self.visibility_filter      = out['visibility_filter']
+            self.viewspace_points   = [out['viewspace_points']]
+            self.radii              = [out['radii']]
+            self.image_sizes        = [(batch['height'], batch['width'])]
 
             if local:
-                self.viewspace_points   += out_local['viewspace_points']
-                self.radii              += out_local['radii']
-                self.visibility_filter  += out_local['visibility_filter']
+                self.viewspace_points.append(out_local['viewspace_points'])
+                self.radii.append(out_local['radii'])
+                self.image_sizes.append([(batch_local['height'], batch_local['width'])])
 
         # prompt
         prompt_utils = self.prompt_utils \
@@ -671,63 +642,26 @@ class Layout2GS(BaseLift3DSystem):
             texts=guidance_eval_out["texts"],
         )
 
+    def on_before_optimizer_step(self, optimizer):
+        super().on_before_optimizer_step(optimizer)
+
+        # gradient synchronization
+        if self.is_gaussian_geometry: 
+            self.geometry.gradient_synchronization()
+
     def optimizer_step(self, epoch, batch_idx, optimizer, optimizer_closure):
-        if self.is_gaussian_geometry:
-            # update learning rate
-            if self._xyz_lr_func is not None:
-                for group in optimizer.param_groups:
-                    if group["name"].split('.')[-1] != '_xyz': continue
-                    group['lr'] = self._xyz_lr_func(self.true_global_step)
-                    break
 
-            if self._features_dc_lr_func is not None:
-                for group in optimizer.param_groups:
-                    if group["name"].split('.')[-1] != '_features_dc': continue
-                    group['lr'] = self._features_dc_lr_func(self.true_global_step)
-                    break
+        # update learning rate
+        if self.is_gaussian_geometry: 
+            self.geometry.scheduler_step(optimizer, self.true_global_step)
             
-            if self._features_rest_lr_func is not None:
-                for group in optimizer.param_groups:
-                    if group["name"].split('.')[-1] != '_features_rest': continue
-                    group['lr'] = self._features_rest_lr_func(self.true_global_step)
-                    break
-            
-            if self._scaling_lr_func is not None:
-                for group in optimizer.param_groups:
-                    if group["name"].split('.')[-1] != '_scaling': continue
-                    group['lr'] = self._scaling_lr_func(self.true_global_step)
-                    break
-
-            if self._rotation_lr_func is not None:
-                for group in optimizer.param_groups:
-                    if group["name"].split('.')[-1] != '_rotation': continue
-                    group['lr'] = self._rotation_lr_func(self.true_global_step)
-                    break
-            
-            if self._opacity_lr_func is not None:
-                for group in optimizer.param_groups:
-                    if group["name"].split('.')[-1] != '_opacity': continue
-                    group['lr'] = self._opacity_lr_func(self.true_global_step)
-                    break
-
-            if self.background_lr_func is not None:
-                for group in optimizer.param_groups:
-                    if group["name"].split('.')[-1] != 'background': continue
-                    group['lr'] = self.background_lr_func(self.true_global_step)
-                    break
-
         # update parameters
         optimizer.step(closure=optimizer_closure)
 
-        if self.is_gaussian_geometry:
-            # update geometry
-            self.geometry.update(
-                self.true_global_step, 
-                optimizer, 
-                self.viewspace_points, 
-                self.radii, 
-                self.visibility_filter)
-            
+        # update geometry
+        if self.is_gaussian_geometry: 
+            self.geometry.density_control(self.true_global_step, optimizer, self.viewspace_points, self.radii, self.image_sizes)
+
     # SaverMixin extension (used in Exporter)
     def save_trimesh(self, filename, mesh) -> List[str]:
         save_paths: List[str] = []

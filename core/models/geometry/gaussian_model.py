@@ -77,29 +77,14 @@ class GaussianModel(BaseExplicitGeometry):
         self.use_sh                     = self.cfg.use_sh
 
         # initialization
-        if self.cfg.init_strategy == 'from_sampling':
-            xyz, features_dc, features_rest, scaling, rotation, opacity, semantic, \
-                instance, instance_location, instance_size, instance_rotation, instance_class, instance_prompt = \
-                    self._init_from_sampling()
-        
-        elif self.cfg.init_strategy == 'from_gaussians':
-            xyz, features_dc, features_rest, scaling, rotation, opacity, semantic, \
-                instance, instance_location, instance_size, instance_rotation, instance_class, instance_prompt = \
-                    self._init_from_gaussians()
-        
-        elif self.cfg.init_strategy == 'from_layout':
-            xyz, features_dc, features_rest, scaling, rotation, opacity, semantic, \
-                instance, instance_location, instance_size, instance_rotation, instance_class, instance_prompt = \
-                    self._init_from_layout()
+        init_func = getattr(self, '_init_' + self.cfg.init_strategy, None)
+        assert init_func is not None, \
+            f'{self.__class__.__name__} init method ({self.cfg.init_strategy}) is unimplemented!'
 
-        elif self.cfg.init_strategy == 'from_mesh':
-            xyz, features_dc, features_rest, scaling, rotation, opacity, semantic, \
-                instance, instance_location, instance_size, instance_rotation, instance_class, instance_prompt = \
-                    self._init_from_mesh()
-            
-        else:
-            raise ValueError
-
+        xyz, features_dc, features_rest, scaling, rotation, opacity, semantic, \
+            instance, instance_location, instance_size, instance_rotation, instance_class, instance_prompt = \
+                init_func()
+        
         # Gaussians
         self._xyz               = nn.Parameter(xyz, requires_grad=True)                 # (N,3)
         self._features_dc       = nn.Parameter(features_dc, requires_grad=True)         # (N,1,3) or (N,3)
@@ -118,13 +103,14 @@ class GaussianModel(BaseExplicitGeometry):
 
         self.num_instance       = int(instance.max().item()) + 1
 
-        self.optimizable_keys = ['_xyz', '_features_dc', '_features_rest', '_scaling', '_rotation', '_opacity']
+        self.optimizable_keys   = ['_xyz', '_features_dc', '_features_rest', '_scaling', '_rotation', '_opacity']
 
         # update
-        self.xyz_grad_accum = torch.zeros((self.get_xyz.shape[0])).to(get_device())
-        self.denom          = torch.zeros((self.get_xyz.shape[0])).to(get_device())
-        self.max_radii2D    = torch.zeros((self.get_xyz.shape[0])).to(get_device())
+        self.xyz_grad_accum     = torch.zeros((self.get_xyz.shape[0])).to(get_device())
+        self.denom              = torch.zeros((self.get_xyz.shape[0])).to(get_device())
+        self.max_radii2D        = torch.zeros((self.get_xyz.shape[0])).to(get_device())
 
+    # initialization
     def _init_from_sampling(self):
         if self.cfg.init_point_strategy == 'random_cube':
             xyz = sampling_cube(self.cfg.init_num_points)
@@ -502,6 +488,7 @@ class GaussianModel(BaseExplicitGeometry):
         return xyz, features_dc, features_rest, scaling, rotation, opacity, semantic, \
             instance, instance_location, instance_size, instance_rotation, instance_class, instance_prompt
 
+    # parameters
     @property
     def get_xyz(self): 
         return self._xyz
@@ -599,6 +586,148 @@ class GaussianModel(BaseExplicitGeometry):
         if self.use_sh and (self.active_sh_degree < self.max_sh_degree):
             self.active_sh_degree += 1
 
+    # optimization
+    @torch.no_grad()
+    def gradient_synchronization(self):
+        if (not torch.distributed.is_available()) or (not torch.distributed.is_initialized()): return
+
+        for k in self.optimizable_keys:
+            param = getattr(self, k)
+            if param.grad is not None:
+                torch.distributed.all_reduce(param.grad.data, op=torch.distributed.ReduceOp.SUM)
+                param.grad.data /= torch.distributed.get_world_size()
+
+    # scheduler
+    def configure_schedulers(self, cfg):
+
+        def _get_lr_func(param_name):
+            attr = f'{param_name}_lr_schedule'
+            if not hasattr(cfg, attr): return None
+            cfg_lr_schedule = getattr(cfg, attr)
+            lr_init         = cfg_lr_schedule.lr_init
+            lr_final        = cfg_lr_schedule.lr_final
+            lr_delay_steps  = getattr(cfg_lr_schedule, 'lr_delay_steps', 0)
+            lr_delay_mult   = getattr(cfg_lr_schedule, 'lr_delay_mult', 1)
+            lr_max_steps    = getattr(cfg_lr_schedule, 'lr_max_steps', 1000000)
+
+            def expon_lr_func(step):
+                """ from 3DGS """
+                if step < 0 or (lr_init == 0.0 and lr_final == 0.0):
+                    # Disable this parameter
+                    return 0.0
+                if lr_delay_steps > 0:
+                    # A kind of reverse cosine decay.
+                    delay_rate = lr_delay_mult + (1 - lr_delay_mult) * np.sin(
+                        0.5 * np.pi * np.clip(step / lr_delay_steps, 0, 1)
+                    )
+                else:
+                    delay_rate = 1.0
+                t = np.clip(step / lr_max_steps, 0, 1)
+                log_lerp = np.exp(np.log(lr_init) * (1 - t) + np.log(lr_final) * t)
+                return delay_rate * log_lerp
+
+            return expon_lr_func
+        
+        self._xyz_lr_func           = _get_lr_func('_xyz')
+        self._features_dc_lr_func   = _get_lr_func('_features_dc')
+        self._features_rest_lr_func = _get_lr_func('_features_rest')
+        self._scaling_lr_func       = _get_lr_func('_scaling')
+        self._rotation_lr_func      = _get_lr_func('_rotation')
+        self._opacity_lr_func       = _get_lr_func('_opacity')
+        self.background_lr_func     = _get_lr_func('background')
+
+    def scheduler_step(self, optimizer, step):
+
+        if self._xyz_lr_func is not None:
+            for group in optimizer.param_groups:
+                if group["name"].split('.')[-1] != '_xyz': continue
+                group['lr'] = self._xyz_lr_func(step)
+                break
+
+        if self._features_dc_lr_func is not None:
+            for group in optimizer.param_groups:
+                if group["name"].split('.')[-1] != '_features_dc': continue
+                group['lr'] = self._features_dc_lr_func(step)
+                break
+        
+        if self._features_rest_lr_func is not None:
+            for group in optimizer.param_groups:
+                if group["name"].split('.')[-1] != '_features_rest': continue
+                group['lr'] = self._features_rest_lr_func(step)
+                break
+        
+        if self._scaling_lr_func is not None:
+            for group in optimizer.param_groups:
+                if group["name"].split('.')[-1] != '_scaling': continue
+                group['lr'] = self._scaling_lr_func(step)
+                break
+
+        if self._rotation_lr_func is not None:
+            for group in optimizer.param_groups:
+                if group["name"].split('.')[-1] != '_rotation': continue
+                group['lr'] = self._rotation_lr_func(step)
+                break
+        
+        if self._opacity_lr_func is not None:
+            for group in optimizer.param_groups:
+                if group["name"].split('.')[-1] != '_opacity': continue
+                group['lr'] = self._opacity_lr_func(step)
+                break
+
+        if self.background_lr_func is not None:
+            for group in optimizer.param_groups:
+                if group["name"].split('.')[-1] != 'background': continue
+                group['lr'] = self.background_lr_func(step)
+                break
+
+    # density control
+    @torch.no_grad()
+    def density_control(self, true_global_step, optimizer, viewspace_points, radii, image_sizes):
+        if (self.cfg.densify_until_step < 0) or (true_global_step < self.cfg.densify_until_step):
+            for _viewspace_points, _radii, _image_size in zip(viewspace_points, radii, image_sizes):
+                if _viewspace_points.grad is None: continue
+                self.__add_densification_stats(_viewspace_points, _radii, _image_size)
+
+            # densify and prune
+            if true_global_step > self.cfg.densify_from_step:
+                if true_global_step % self.cfg.densify_interval == 0:
+                    self._densify_and_prune(optimizer)
+
+            # opacity reset
+            if (self.cfg.opacity_reset_interval > 0) and \
+                (true_global_step % self.cfg.opacity_reset_interval == 0) and \
+                (true_global_step != 0):
+                self.reset_opacity(optimizer)
+
+    def __add_densification_stats(self, viewspace_points, radii, image_size):
+        grads = viewspace_points.absgrad.clone() if hasattr(viewspace_points, 'absgrad') else \
+                viewspace_points.grad.clone()
+        
+        if self.cfg.normalize_grad:
+            n_cam, height, width = grads.shape[0], *image_size
+            grads[..., 0] *= height / 2.0 * n_cam
+            grads[..., 1] *= width / 2.0 * n_cam
+
+        selected    = radii > 0.                # (n_cam, n_point)
+        gs_ids      = torch.where(selected)[1]  # (nnz)
+        grads       = grads[selected]           # (nnz, 2 or 3)
+
+        local_grads = torch.zeros_like(self.xyz_grad_accum)
+        local_grads.index_add_(0, gs_ids, grads.norm(dim=-1))
+        if torch.distributed.is_available() and torch.distributed.is_initialized():
+            torch.distributed.all_reduce(local_grads, op=torch.distributed.ReduceOp.SUM)
+        self.xyz_grad_accum += local_grads
+
+        local_denom = torch.zeros_like(self.denom)
+        local_denom.index_add_(0, gs_ids, torch.ones_like(gs_ids, dtype=torch.float32))
+        if torch.distributed.is_available() and torch.distributed.is_initialized():
+            torch.distributed.all_reduce(local_denom, op=torch.distributed.ReduceOp.SUM)
+        self.denom          += local_denom
+
+        self.max_radii2D[gs_ids] = torch.maximum(self.max_radii2D[gs_ids], radii[selected])
+        if torch.distributed.is_available() and torch.distributed.is_initialized():
+            torch.distributed.all_reduce(self.max_radii2D, op=torch.distributed.ReduceOp.MAX)
+
     def reset_opacity(self, optimizer):
         new_opacity = self.opacity_inverse_activation(
                         torch.min(self.get_opacity, self.cfg.init_opacity_value * torch.ones_like(self.get_opacity)))
@@ -619,23 +748,6 @@ class GaussianModel(BaseExplicitGeometry):
 
                 optimizable_tensors[group["name"].split('.')[-1]] = group["params"][0]
         return optimizable_tensors
-
-    def add_densification_stats(self, viewspace_points, radii, image_size):
-        grads = viewspace_points.absgrad.clone() if hasattr(viewspace_points, 'absgrad') else \
-                viewspace_points.grad.clone()
-        
-        if self.cfg.normalize_grad:
-            n_cam, height, width = grads.shape[0], *image_size
-            grads[..., 0] *= height / 2.0 * n_cam
-            grads[..., 1] *= width / 2.0 * n_cam
-
-        selected    = radii > 0.                # (n_cam, n_point)
-        gs_ids      = torch.where(selected)[1]  # (nnz)
-        grads       = grads[selected]           # (nnz, 2 or 3)
-
-        self.xyz_grad_accum.index_add_(0, gs_ids, grads.norm(dim=-1))
-        self.denom.index_add_(0, gs_ids, torch.ones_like(gs_ids, dtype=torch.float32))
-        self.max_radii2D[gs_ids] = torch.maximum(self.max_radii2D[gs_ids], radii[selected])
 
     def prune_points(self, optimizer, prune_mask):
         valid_mask          = ~prune_mask
@@ -864,24 +976,7 @@ class GaussianModel(BaseExplicitGeometry):
 
         torch.cuda.empty_cache()
 
-    @torch.no_grad()
-    def update(self, true_global_step, optimizer, viewspace_points, radii, image_sizes):
-        if (self.cfg.densify_until_step < 0) or (true_global_step < self.cfg.densify_until_step):
-            for _viewspace_points, _radii, _image_size in zip(viewspace_points, radii, image_sizes):
-                if _viewspace_points.grad is None: continue
-                self.add_densification_stats(_viewspace_points, _radii, _image_size)
-
-            # densify and prune
-            if true_global_step > self.cfg.densify_from_step:
-                if true_global_step % self.cfg.densify_interval == 0:
-                    self._densify_and_prune(optimizer)
-
-            # opacity reset
-            if (self.cfg.opacity_reset_interval > 0) and \
-                (true_global_step % self.cfg.opacity_reset_interval == 0) and \
-                (true_global_step != 0):
-                self.reset_opacity(optimizer)
-
+    # regularization
     def total_variation(self, return_feature=True, return_rotation=True):
         xyz = self.get_xyz  # (n,3)
 
@@ -929,6 +1024,7 @@ class GaussianModel(BaseExplicitGeometry):
         # # loss_feature    = loss_feature.mean()
         # print(loss_feature.item())
 
+    # ouptut
     def export(self, path, fmt='pointcloud'):
         assert fmt in ['pointcloud', 'gaussians', 'mesh']
 
