@@ -18,9 +18,7 @@ from threestudio.utils.typing import *
 
 from diffusers.pipelines.controlnet import MultiControlNetModel
 
-
-HF_ROOT = os.environ.get('HF_ROOT')
-HF_PATH = lambda p: os.path.join(HF_ROOT, p) if (HF_ROOT is not None) and (not os.path.exists(p)) else p
+from core.utils.helper import HF_PATH
 
 
 @threestudio.register("multi-controlnet-guidance")
@@ -176,12 +174,12 @@ class MultiControlNetGuidance(BaseObject):
 
         threestudio.info(f"Loaded Multi Control Net!")
 
-    @torch.cuda.amp.autocast(enabled=False)
+    @torch.amp.autocast('cuda', enabled=False)
     def set_min_max_steps(self, min_step_percent=0.02, max_step_percent=0.98):
         self.min_step = int(self.num_train_timesteps * min_step_percent)
         self.max_step = int(self.num_train_timesteps * max_step_percent)
 
-    @torch.cuda.amp.autocast(enabled=False)
+    @torch.amp.autocast('cuda', enabled=False)
     def forward_controlnet(
         self,
         latents: Float[Tensor, "..."],
@@ -222,7 +220,7 @@ class MultiControlNetGuidance(BaseObject):
 
         return [t.to(input_dtype) for t in down_block_res_samples], mid_block_res_sample.to(input_dtype)
 
-    @torch.cuda.amp.autocast(enabled=False)
+    @torch.amp.autocast('cuda', enabled=False)
     def forward_unet(
         self,
         latents: Float[Tensor, "..."],
@@ -246,7 +244,7 @@ class MultiControlNetGuidance(BaseObject):
             mid_block_additional_residual=mid_block_additional_residual
         ).sample.to(input_dtype)
 
-    @torch.cuda.amp.autocast(enabled=False)
+    @torch.amp.autocast('cuda', enabled=False)
     def encode_images(
         self, imgs: Float[Tensor, "B 3 512 512"]
     ) -> Float[Tensor, "B 4 64 64"]:
@@ -256,7 +254,7 @@ class MultiControlNetGuidance(BaseObject):
         latents = posterior.sample() * self.vae.config.scaling_factor
         return latents.to(input_dtype)
 
-    @torch.cuda.amp.autocast(enabled=False)
+    @torch.amp.autocast('cuda', enabled=False)
     def decode_latents(
         self,
         latents: Float[Tensor, "B 4 H W"],
@@ -799,7 +797,7 @@ class MultiControlNetGuidance(BaseObject):
 
         return guidance_out
 
-    @torch.cuda.amp.autocast(enabled=False)
+    @torch.amp.autocast('cuda', enabled=False)
     @torch.no_grad()
     def get_noise_pred(
         self,
@@ -889,7 +887,7 @@ class MultiControlNetGuidance(BaseObject):
 
         return noise_pred
 
-    @torch.cuda.amp.autocast(enabled=False)
+    @torch.amp.autocast('cuda', enabled=False)
     @torch.no_grad()
     def guidance_eval(
         self,
