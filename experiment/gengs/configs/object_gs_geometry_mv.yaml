@@ -82,8 +82,8 @@ system:
 
   geometry_guidance_type: "multiview-nddiffusion-guidance"
   geometry_guidance:
-    pretrained_config: "nddiffusion/configs/txtcond_mvsd-4-objaverse_finetune_wovae.yaml"
-    pretrained_model_name_or_path: "nddiffusion/ckpt/nd_mv_ema.ckpt"
+    pretrained_config: "../../checkpoint/nddiffusion/txtcond_mvsd-4-objaverse_finetune_wovae.yaml"
+    pretrained_model_name_or_path: "../../checkpoint/nddiffusion/nd_mv_ema.ckpt"
     clip_pretrained_model_name_or_path: "openai/clip-vit-large-patch14"
     n_view: ${data.n_view}
     rotate_z: true
@@ -95,7 +95,7 @@ system:
     use_img_loss: false
 
   freq:
-    guidance_eval: 100
+    guidance_eval: -1
 
   loggers:
     wandb:

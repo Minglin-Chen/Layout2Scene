@@ -13,7 +13,7 @@ matplotlib
 imageio
 imageio[ffmpeg]
 git+https://github.com/NVlabs/nvdiffrast.git
-libigl
+libigl==2.5.1
 xatlas
 trimesh[easy]
 networkx
@@ -25,7 +25,7 @@ git+https://github.com/ashawkey/envlight.git
 torchmetrics
 
 # deepfloyd
-xformers
+# xformers
 bitsandbytes
 sentencepiece
 safetensors
@@ -39,3 +39,12 @@ git+https://github.com/openai/CLIP.git
 
 #controlnet
 controlnet_aux
+
+# layout2scene
+git+https://gitlab.inria.fr/bkerbl/simple-knn.git
+git+https://github.com/ashawkey/diff-gaussian-rasterization.git
+git+https://github.com/nerfstudio-project/gsplat.git
+plyfile
+pymeshlab
+open-clip-torch
+mediapipe

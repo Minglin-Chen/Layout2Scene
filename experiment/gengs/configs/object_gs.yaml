@@ -65,7 +65,7 @@ system:
     view_dependent_prompting: true
 
   freq:
-    guidance_eval: 100
+    guidance_eval: -1
 
   loggers:
     wandb:

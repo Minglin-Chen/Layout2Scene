@@ -132,6 +132,9 @@ def main(args, extras) -> None:
 
         install_import_hook("threestudio", "typeguard.typechecked")
 
+    import warnings
+    warnings.simplefilter(action='ignore', category=FutureWarning)
+
     import threestudio
     from threestudio.systems.base import BaseSystem
     from threestudio.utils.callbacks import (
@@ -148,7 +151,7 @@ def main(args, extras) -> None:
     # To properly utilize them, you should set `torch.set_float32_matmul_precision('medium' | 'high')` 
     # which will trade-off precision for performance. 
     # For more details, read https://pytorch.org/docs/stable/generated/torch.set_float32_matmul_precision.html#torch.set_float32_matmul_precision
-    torch.set_float32_matmul_precision('medium')
+    # torch.set_float32_matmul_precision('medium')
 
     logger = logging.getLogger("pytorch_lightning")
     if args.verbose:
