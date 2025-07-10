@@ -160,7 +160,7 @@ class Layout2GS(BaseLift3DSystem):
         if 'local' in batch.keys():
             batch_local = batch.pop('local')
             local       = True
-            local_index = np.random.randint(self.geometry.num_instance)
+            local_index = 0 # np.random.randint(self.geometry.num_instance)
             batch_local.update({'local': local, 'local_index': local_index})
             
         out         = self(batch)
@@ -169,12 +169,14 @@ class Layout2GS(BaseLift3DSystem):
         if self.is_gaussian_geometry:
             self.viewspace_points   = [out['viewspace_points']]
             self.radii              = [out['radii']]
+            self.local_masks        = [out['local_masks']]
             self.image_sizes        = [(batch['height'], batch['width'])]
 
             if local:
                 self.viewspace_points.append(out_local['viewspace_points'])
                 self.radii.append(out_local['radii'])
-                self.image_sizes.append([(batch_local['height'], batch_local['width'])])
+                self.local_masks.append(out_local['local_masks'])
+                self.image_sizes.append((batch_local['height'], batch_local['width']))
 
         # prompt
         prompt_utils = self.prompt_utils \
@@ -660,7 +662,14 @@ class Layout2GS(BaseLift3DSystem):
 
         # update geometry
         if self.is_gaussian_geometry: 
-            self.geometry.density_control(self.true_global_step, optimizer, self.viewspace_points, self.radii, self.image_sizes)
+            self.geometry.density_control(
+                self.true_global_step, 
+                optimizer, 
+                self.viewspace_points, 
+                self.radii, 
+                self.local_masks,
+                self.image_sizes,
+            )
 
     # SaverMixin extension (used in Exporter)
     def save_trimesh(self, filename, mesh) -> List[str]:

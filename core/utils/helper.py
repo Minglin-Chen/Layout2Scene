@@ -9,6 +9,7 @@ import numpy as np
 
 import threestudio
 from threestudio.utils.typing import *
+from threestudio.utils.ops import convert_pose
 
 import trimesh
 
@@ -75,10 +76,47 @@ def quaternion_multiply(q1: Num[Tensor, "N 4"], q2: Num[Tensor, "N 4"]):
     return torch.stack([r,x,y,z], dim=-1)
 
 def fov2focal(fov, pixels):
-    return 0.5 * pixels / math.tan(0.5 * fov)
+    return 0.5 * pixels / torch.tan(0.5 * fov)
 
 def focal2fov(focal, pixels):
-    return 2 * math.atan(pixels / (2 * focal))
+    return 2 * torch.atan(pixels / (2 * focal))
+
+def get_projection_matrix_gaussian_batch(znear, zfar, fovX, fovY, device="cuda"):
+    tanHalfFovY = torch.tan((fovY / 2))
+    tanHalfFovX = torch.tan((fovX / 2))
+
+    top = tanHalfFovY * znear
+    bottom = -top
+    right = tanHalfFovX * znear
+    left = -right
+
+    P = torch.zeros(fovX.shape[0], 4, 4, device=device)
+
+    z_sign = 1.0
+
+    P[:, 0, 0] = 2.0 * znear / (right - left)
+    P[:, 1, 1] = 2.0 * znear / (top - bottom)
+    P[:, 0, 2] = (right + left) / (right - left)
+    P[:, 1, 2] = (top + bottom) / (top - bottom)
+    P[:, 3, 2] = z_sign
+    P[:, 2, 2] = z_sign * zfar / (zfar - znear)
+    P[:, 2, 3] = -(zfar * znear) / (zfar - znear)
+    return P
+
+def get_cam_info_gaussian_batch(c2w, fovx, fovy, znear, zfar):
+    c2w = convert_pose(c2w)
+    world_view_transform = torch.inverse(c2w.float())
+
+    world_view_transform = world_view_transform.transpose(1, 2).float()
+    projection_matrix = (
+        get_projection_matrix_gaussian_batch(
+            znear=znear, zfar=zfar, fovX=fovx, fovY=fovy, device=c2w.device)
+        .transpose(1, 2)
+    )
+    full_proj_transform = world_view_transform.bmm(projection_matrix).float()
+    camera_center = world_view_transform.inverse()[:, 3, :3]
+
+    return world_view_transform, full_proj_transform, camera_center
 
 def euler_to_rotation_matrix(euler: torch.Tensor, convention: str = "XYZ", degree: bool = False) -> torch.Tensor:
     assert (euler.dim() > 0) and (euler.shape[-1] == 3)

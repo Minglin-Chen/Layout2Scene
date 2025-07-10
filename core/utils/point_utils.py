@@ -28,6 +28,33 @@ def depths_to_points(world_view_transform, full_proj_transform, depthmap, space=
     points = depthmap.reshape(-1, 1) * rays_d + rays_o
     return points
 
+def depths_to_points_batch(world_view_transform, full_proj_transform, depthmap, space='world'):
+    assert space in ['world', 'camera']
+
+    assert depthmap.ndim == 4
+    B, H, W = depthmap.shape[:3]  # B,H,W,1
+
+    c2w = (world_view_transform.transpose(1,2)).inverse()
+    projection_matrix = c2w.transpose(1,2) @ full_proj_transform
+    ndc2pix = torch.tensor([
+        [W / 2, 0, 0, (W) / 2],
+        [0, H / 2, 0, (H) / 2],
+        [0, 0, 0, 1]]).float().to(depthmap).T
+    intrins = (projection_matrix @ ndc2pix)[:,:3,:3].transpose(1, 2)
+    
+    grid_x, grid_y = torch.meshgrid(torch.arange(W).float(), torch.arange(H).float(), indexing='xy')
+    grid_x, grid_y = grid_x.to(depthmap), grid_y.to(depthmap)
+    points = torch.stack([grid_x, grid_y, torch.ones_like(grid_x)], dim=-1).reshape(1,-1,3).repeat(B,1,1)
+    if space == 'world':
+        rays_d = points @ intrins.float().inverse().transpose(1,2) @ c2w[:,:3,:3].transpose(1,2)
+        rays_o = c2w[:,:3,3].unsqueeze(dim=1)
+    else:
+        rays_d = points @ intrins.float().inverse().transpose(1,2)
+        rays_o = torch.zeros((B,1,3)).to(depthmap)
+
+    points = depthmap.reshape(B, -1, 1) * rays_d + rays_o
+    return points
+
 def depth_to_normal(world_view_transform, full_proj_transform, depth, space='world'):
     points = depths_to_points(
         world_view_transform, full_proj_transform, depth, space).reshape(*depth.shape[1:], 3)
@@ -36,6 +63,20 @@ def depth_to_normal(world_view_transform, full_proj_transform, depth, space='wor
     dy = torch.cat([points[1:-1, 2:] - points[1:-1, :-2]], dim=1)
     normal_map = torch.nn.functional.normalize(torch.cross(dx, dy, dim=-1), dim=-1)
     output[1:-1, 1:-1, :] = normal_map
+    if space == 'camera':
+        # camera coordinate: OpenCV (up:-y,right:+x,forward:+z) -> OpenGL (up:+y,right:+x,forward:-z)
+        # flip x-axis
+        output *= -1.0
+    return output
+
+def depth_to_normal_batch(world_view_transform, full_proj_transform, depth, space='world'):
+    points = depths_to_points_batch(
+        world_view_transform, full_proj_transform, depth, space).reshape(*depth.shape[:-1], 3)
+    output = torch.zeros_like(points)
+    dx = torch.cat([points[:, 2:, 1:-1] - points[:, :-2, 1:-1]], dim=0)
+    dy = torch.cat([points[:, 1:-1, 2:] - points[:, 1:-1, :-2]], dim=1)
+    normal_map = torch.nn.functional.normalize(torch.cross(dx, dy, dim=-1), dim=-1)
+    output[:, 1:-1, 1:-1, :] = normal_map
     if space == 'camera':
         # camera coordinate: OpenCV (up:-y,right:+x,forward:+z) -> OpenGL (up:+y,right:+x,forward:-z)
         # flip x-axis

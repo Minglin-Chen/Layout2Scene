@@ -9,18 +9,19 @@ from threestudio.models.renderers.base import Rasterizer
 from threestudio.utils.typing import *
 from threestudio.utils.ops import get_cam_info_gaussian
 
-# import gsplat
+import gsplat
 from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
 
-from core.utils.helper import fov2focal, focal2fov, quaternion_multiply
-from core.utils.point_utils import depth_to_normal
-import torch.linalg
+from core.utils.helper import fov2focal, focal2fov, get_cam_info_gaussian_batch
+from core.utils.point_utils import depth_to_normal_batch
 
 
 @threestudio.register("gaussian-splatting-rasterizer")
 class GaussianSplattingRasterizer(Rasterizer):
     @dataclass
     class Config(Rasterizer.Config):
+        backend: str                = 'vanilla'
+
         depth_type: str             = 'inverse'         # options: 'raw', 'inverse', etc
         depth_norm_radius: float    = 1.0
         depth_min_value: float      = 0.0
@@ -38,8 +39,6 @@ class GaussianSplattingRasterizer(Rasterizer):
         znear: float                = 0.01
         zfar: float                 = 100.0
 
-        object_dropout_rate: float  = 0.0
-
         # unused
         # - radius
 
@@ -50,12 +49,6 @@ class GaussianSplattingRasterizer(Rasterizer):
         geometry, material, background
     ) -> None:
         super().configure(geometry, material, background)
-        # dropout objects during inference
-        self.object_dropout_ids     = []
-        # edit objects during inference
-        self.object_translations    = [[0.,0.,0.] for _ in range(self.geometry.num_instance)]
-        self.object_rotations       = [0. for _ in range(self.geometry.num_instance)]
-        self.object_scales          = [1. for _ in range(self.geometry.num_instance)]
 
     def forward(
         self,
@@ -69,11 +62,15 @@ class GaussianSplattingRasterizer(Rasterizer):
         local_index: Optional[List] = None,
         **kwargs
     ) -> Dict[str, Float[Tensor, "..."]]:
-        # self.__splatting_batch_gsplat_backend(c2w, fovy, height, width, local, local_index)
 
-        fg_rgb, opacity, fg_semantic, fg_depth, fg_normal, \
-            viewspace_points, visibility_filter, radii = \
-                self.__splatting_batch(c2w, fovy, height, width, local, local_index)
+        if self.cfg.backend == 'vanilla':
+            fg_rgb, opacity, fg_semantic, fg_depth, fg_normal, viewspace_points, radii, local_masks = \
+                self.__splatting_batch_vanilla(c2w, fovy, height, width, local, local_index)
+        elif self.cfg.backend == 'gsplat':
+            fg_rgb, opacity, fg_semantic, fg_depth, fg_normal, viewspace_points, radii, local_masks = \
+                self.__splatting_batch_gsplat(c2w, fovy, height, width, local, local_index)
+        else:
+            raise NotImplementedError
 
         bg_out      = self.background(local=local, mvp_mtx=mvp_mtx, c2w=c2w, height=height, width=width)
         bg_rgb      = bg_out['rgb']
@@ -89,7 +86,7 @@ class GaussianSplattingRasterizer(Rasterizer):
         comp_semantic   = opacity * fg_semantic + (1. - opacity) * bg_semantic
 
         # correctness
-        mask = (fg_depth[...,0] > bg_depth[...,0]) & (bg_depth[...,0] > 0.0)
+        mask                = (fg_depth[...,0] > bg_depth[...,0]) & (bg_depth[...,0] > 0.0)
         comp_rgb[mask]      = bg_rgb[mask]
         comp_depth[mask]    = bg_depth[mask]
         comp_normal[mask]   = bg_normal[mask]
@@ -179,116 +176,23 @@ class GaussianSplattingRasterizer(Rasterizer):
             "comp_normal"       : comp_normal,
             "comp_semantic"     : comp_semantic,
             "viewspace_points"  : viewspace_points,
-            "visibility_filter" : visibility_filter,
             "radii"             : radii,
+            "local_masks"       : local_masks,
         }
 
         return out
-        
-    # def __splatting_batch_gsplat_backend(
-    #     self,
-    #     c2w: Float[Tensor, "B 4 4"], 
-    #     fovy: Float[Tensor, "B"],
-    #     height: int,
-    #     width: int,
-    #     local: bool = False,
-    #     local_index: int = -1
-    # ):
-    #     means3D, opacity, scales, rotations, features, semantic, instance, local_mask = \
-    #         self.geometry.get_global_params() if not local else self.geometry.get_local_params(local_index)
-
-    #     fx = fy = 0.5 * height / torch.tan(0.5 * fovy)
-    #     cx, cy = 0.5 * width, 0.5 * height
-    #     Ks = torch.zeros((fx.shape[0], 3, 3), dtype=fx.dtype, device=fx.device)
-    #     Ks[:, 0, 0] = fx
-    #     Ks[:, 1, 1] = fy
-    #     Ks[:, 0, 2] = cx
-    #     Ks[:, 1, 2] = cy
-    #     Ks[:, 2, 2] = 1.0
-
-
-    #     render_colors, render_alphas, meta = gsplat.rasterization(
-    #         means=means3D,
-    #         quats=rotations,
-    #         scales=scales,
-    #         opacities=opacity[...,-1],
-    #         colors=features,
-    #         viewmats=torch.linalg.inv(c2w),
-    #         Ks=Ks,
-    #         width=width,
-    #         height=height,
-    #         sh_degree=self.geometry.active_sh_degree if self.geometry.use_sh else 0
-    #     )
-
-    #     print(render_colors.shape)
-    #     print(render_alphas.shape)
-    #     print(meta.keys())
-
-    def __splatting(
-        self, 
-        c2w: Float[Tensor, "4 4"], 
-        fovx: float, 
-        fovy: float,
-        height: int,
-        width: int,
-        local: bool,
-        local_index: int,
+         
+    def __splatting_one(
+        self, means3D, opacity, scales, rotations, features, semantic, c2w, fovx, fovy, height, width,
     ) -> tuple[Float[Tensor, "..."]]:
         world_view_transform, full_proj_transform, camera_center = \
             get_cam_info_gaussian(c2w, fovx, fovy, self.cfg.znear, self.cfg.zfar)
 
-        means3D, opacity, scales, rotations, features, semantic, instance, local_mask = \
-            self.geometry.get_global_params() if not local else self.geometry.get_local_params(local_index)
-
-        # object dropout through masking opacity
-        if self.training and (self.cfg.object_dropout_rate >= 0.0):
-            opacity_mask = torch.ones_like(opacity)
-            for i in range(self.geometry.num_instance):
-                opacity_mask[instance==i] = int(np.random.rand() > self.cfg.object_dropout_rate)
-            opacity = opacity * opacity_mask
-        else:
-            opacity_mask = torch.ones_like(opacity)
-            for i in self.object_dropout_ids:
-                opacity_mask[instance==i] = 0.0
-            opacity = opacity * opacity_mask
-
-        if not self.training:
-            means3D     = means3D.clone()
-            scales      = scales.clone()
-            rotations   = rotations.clone()
-            for i in range(self.geometry.num_instance):
-                selected_index = instance[...,0]==i
-
-                o_s, o_t, o_phi = \
-                    self.object_scales[i], self.object_translations[i], self.object_rotations[i]
-                o_t = torch.tensor(o_t).to(means3D)
-                o_R = torch.tensor([
-                    [np.cos(o_phi), -np.sin(o_phi), 0.0],
-                    [np.sin(o_phi),  np.cos(o_phi), 0.0],
-                    [           0.0,           0.0, 1.0]
-                ]).to(means3D)
-
-                o_t_orig = self.geometry.instance_location[i].to(means3D)
-
-                obj_xyz = means3D[selected_index] - o_t_orig
-                obj_xyz = (obj_xyz @ o_R.T) * o_s + o_t_orig + o_t
-                means3D[selected_index] = obj_xyz
-
-                scales[selected_index] *= o_s
-
-                o_q = torch.tensor([np.cos(o_phi*0.5), 0.0, 0.0, np.sin(o_phi*0.5)]).to(means3D)
-                rotations[selected_index] = quaternion_multiply(o_q, rotations[selected_index])
-                
-        # Create zero tensor. We will use it to make pytorch return gradients of the 2D (screen-space) means
-        means2D = torch.zeros_like(
-            self.geometry.get_xyz, dtype=means3D.dtype, requires_grad=True, device=means3D.device) + 0
-        try:
-            means2D.retain_grad()
-        except:
-            pass
+        means2D = torch.zeros_like(means3D, dtype=means3D.dtype, requires_grad=True, device=means3D.device)
+        if self.training: means2D.retain_grad()
 
         # Set up rasterization configuration
-        raster_settings = GaussianRasterizationSettings(
+        rasterizer = GaussianRasterizer(raster_settings=GaussianRasterizationSettings(
             image_height    = height,
             image_width     = width,
             tanfovx         = math.tan(fovx*0.5),
@@ -301,11 +205,11 @@ class GaussianSplattingRasterizer(Rasterizer):
             campos          = camera_center,
             prefiltered     = False,
             debug           = False,
-        )
-        rasterizer = GaussianRasterizer(raster_settings=raster_settings)
+        ))
+
         rendered_image, radii, rendered_depth, rendered_alpha = rasterizer(
             means3D         = means3D,
-            means2D         = means2D if not local else means2D[local_mask],
+            means2D         = means2D,
             shs             = features if self.geometry.use_sh else None,
             colors_precomp  = None if self.geometry.use_sh else features,
             opacities       = opacity,
@@ -317,7 +221,7 @@ class GaussianSplattingRasterizer(Rasterizer):
         with torch.no_grad():
             rendered_semantic, _, _, _ = rasterizer(
                 means3D         = means3D,
-                means2D         = means2D if not local else means2D[local_mask],
+                means2D         = means2D.detach().clone(),
                 shs             = None,
                 colors_precomp  = semantic,
                 opacities       = opacity,
@@ -326,45 +230,33 @@ class GaussianSplattingRasterizer(Rasterizer):
                 cov3D_precomp   = None
             )
 
-        mask                        = rendered_alpha[0] != 0
-        rendered_image[:,mask]      = rendered_image[:,mask] / rendered_alpha[:,mask]
-        rendered_depth[:,mask]      = rendered_depth[:,mask] / rendered_alpha[:,mask]
-        rendered_semantic[:,mask]   = rendered_semantic[:,mask] / rendered_alpha[:,mask]
+        # (X,H,W) -> (1,H,W,X)
+        rendered_image          = rendered_image.unsqueeze(0).permute(0,2,3,1)
+        rendered_alpha          = rendered_alpha.unsqueeze(0).permute(0,2,3,1)
+        rendered_depth          = rendered_depth.unsqueeze(0).permute(0,2,3,1)
+        rendered_semantic       = rendered_semantic.unsqueeze(0).permute(0,2,3,1)
+
+        mask                    = rendered_alpha[...,0] != 0
+        rendered_image[mask]    = rendered_image[mask] / rendered_alpha[mask]
+        rendered_depth[mask]    = rendered_depth[mask] / rendered_alpha[mask]
+        rendered_semantic[mask] = rendered_semantic[mask] / rendered_alpha[mask]
 
         # assume the depth points form the 'surface' and generate psudo surface normal for regularizations.
-        surf_normal = depth_to_normal(
-                        world_view_transform, 
-                        full_proj_transform, rendered_depth, 
-                        self.cfg.normal_space)
-        surf_normal = surf_normal.permute(2,0,1)
+        surf_normal = depth_to_normal_batch(
+            world_view_transform[None], full_proj_transform[None], rendered_depth, self.cfg.normal_space)
         # remember to multiply with accum_alpha since render_normal is unnormalized.
         # surf_normal = surf_normal * rendered_alpha
 
-        comp_rgb        = rendered_image.unsqueeze(0).permute(0,2,3,1)
-        opacity         = rendered_alpha.unsqueeze(0).permute(0,2,3,1)
-        comp_semantic   = rendered_semantic.unsqueeze(0).permute(0,2,3,1)
-        comp_depth      = rendered_depth.unsqueeze(0).permute(0,2,3,1)
-        comp_normal     = surf_normal.unsqueeze(0).permute(0,2,3,1)
+        comp_rgb        = rendered_image
+        opacity         = rendered_alpha
+        comp_semantic   = rendered_semantic
+        comp_depth      = rendered_depth
+        comp_normal     = surf_normal
+        radii           = radii / float(max(width, height))
 
-        radii_full = radii
-        if local:
-            radii_full = torch.zeros((self.geometry.get_xyz.shape[0]), dtype=radii.dtype, device=radii.device)
-            radii_full[local_mask] = radii
-
-        viewspace_points    = means2D
-        visibility_filter   = radii_full > 0
-
-        return \
-            comp_rgb, \
-            opacity, \
-            comp_semantic, \
-            comp_depth, \
-            comp_normal, \
-            viewspace_points, \
-            visibility_filter, \
-            radii_full
+        return comp_rgb, opacity, comp_semantic, comp_depth, comp_normal, means2D, radii
     
-    def __splatting_batch(
+    def __splatting_batch_vanilla(
         self, 
         c2w: Float[Tensor, "B 4 4"], 
         fovy: Float[Tensor, "B"],
@@ -373,25 +265,44 @@ class GaussianSplattingRasterizer(Rasterizer):
         local: bool = False,
         local_index: int = -1,
     ):
-        rgb_list, opacity_list, semantic_list, depth_list, normal_list = [], [], [], [], []
-        viewspace_points_list, visibility_filter_list, radii_list = [], [], []
-        for _c2w, _fovy in zip(c2w, fovy):
-            focal = fov2focal(_fovy, height)
-            _fovx = focal2fov(focal, width)
+        # camera intrinsic
+        focal   = fov2focal(fovy, height)
+        fovx    = focal2fov(focal, width)
 
-            rgb, opacity, semantic, depth, normal, \
-                viewspace_points, visibility_filter, radii = \
-                    self.__splatting(_c2w, _fovx, _fovy, height, width, local, local_index)
+        # Gaussians
+        means3D, opacity, scales, rotations, features, semantic, instance, local_mask = \
+            self.geometry.get_global_params() if not local else self.geometry.get_local_params(local_index)
+
+        # rendering
+        # B, N = c2w.shape[0], self.geometry.get_xyz.shape[0]
+        # means2D = torch.zeros((B,N,3), dtype=means3D.dtype, requires_grad=True, device=means3D.device)
+        # if self.training: means2D.retain_grad()
+
+        # radii = torch.zeros((B,N), dtype=means3D.dtype, device=means3D.device)
+        
+        rgb_list, opacity_list, semantic_list, depth_list, normal_list, mean2d_list, radii_list = \
+            [], [], [], [], [], [], []
+        for i, (_c2w, _fovx, _fovy) in enumerate(zip(c2w, fovx, fovy)):
+            # _means2D = means2D[i] if not local else means2D[i][local_mask]
+
+            _rgb, _opacity, _semantic, _depth, _normal, _means2d, _radii = self.__splatting_one(
+                means3D, opacity, scales, rotations, features, semantic,
+                _c2w, _fovx, _fovy, height, width)
             
-            rgb_list.append(rgb)
-            opacity_list.append(opacity)
-            semantic_list.append(semantic)
-            depth_list.append(depth)
-            normal_list.append(normal)
+            rgb_list.append(_rgb)
+            opacity_list.append(_opacity)
+            semantic_list.append(_semantic)
+            depth_list.append(_depth)
+            normal_list.append(_normal)
+            mean2d_list.append(_means2d)
+            radii_list.append(_radii)
 
-            viewspace_points_list.append(viewspace_points)
-            visibility_filter_list.append(visibility_filter)
-            radii_list.append(radii)
+            # if local: 
+            #     radii[i][local_mask] = _radii.to(radii)
+            # else: 
+            #     radii[i] = _radii.to(radii)
+
+        # radii /= float(max(width, height))
 
         return \
             torch.cat(rgb_list), \
@@ -399,6 +310,89 @@ class GaussianSplattingRasterizer(Rasterizer):
             torch.cat(semantic_list), \
             torch.cat(depth_list), \
             torch.cat(normal_list), \
-            viewspace_points_list, \
-            visibility_filter_list, \
-            radii_list
+            torch.stack(mean2d_list), \
+            torch.stack(radii_list), \
+            local_mask
+    
+    def __splatting_batch_gsplat(
+        self,
+        c2w: Float[Tensor, "B 4 4"], 
+        fovy: Float[Tensor, "B"], 
+        height: int, 
+        width: int, 
+        local: bool = False, 
+        local_index: int = -1
+    ):
+        # camera intrinsic
+        focal       = fov2focal(fovy, height)
+        fovx        = focal2fov(focal, width)
+        Ks          = torch.zeros((focal.shape[0], 3, 3)).to(focal)
+        Ks[:, 0, 0] = focal
+        Ks[:, 1, 1] = focal
+        Ks[:, 0, 2] = 0.5 * width
+        Ks[:, 1, 2] = 0.5 * height
+        Ks[:, 2, 2] = 1.0
+
+        # camera pose
+        world_view_transform, full_proj_transform, _ = \
+            get_cam_info_gaussian_batch(c2w, fovx, fovy, self.cfg.znear, self.cfg.zfar)
+        viewmats = world_view_transform.transpose(1, 2)
+
+        # Gaussians
+        means3D, opacity, scales, rotations, features, semantic, instance, local_mask = \
+            self.geometry.get_global_params() if not local else self.geometry.get_local_params(local_index)
+
+        # rendering
+        rendered_results, rendered_alpha, meta = gsplat.rasterization(
+            means=means3D, quats=rotations, scales=scales, opacities=opacity.squeeze(dim=-1), colors=features,
+            viewmats=viewmats, Ks=Ks, width=width, height=height, near_plane=self.cfg.znear, far_plane=self.cfg.zfar,
+            sh_degree=self.geometry.active_sh_degree if self.geometry.use_sh else None,
+            packed=False, absgrad=False, 
+            rasterize_mode='classic', # options: classic, antialiased
+            distributed=False,
+            render_mode='RGB+D', # options: RGB+D, RGB+ED
+        )
+        rendered_image  = rendered_results[...,:-1].clone()
+        rendered_depth  = rendered_results[...,-1:].clone()
+        means2d         = meta['means2d']
+        radii           = meta['radii'].max(dim=-1).values / float(max(width, height))
+        
+        if self.training: means2d.retain_grad()
+
+        with torch.no_grad():
+            rendered_semantic, _, _ = gsplat.rasterization(
+                means=means3D, quats=rotations, scales=scales, opacities=opacity.squeeze(dim=-1), colors=semantic,
+                viewmats=viewmats, Ks=Ks, width=width, height=height, near_plane=self.cfg.znear, far_plane=self.cfg.zfar,
+                sh_degree=None,
+                packed=False, absgrad=False, 
+                rasterize_mode='classic',
+                distributed=False,
+                render_mode='RGB'
+            )
+
+        mask                    = rendered_alpha[...,0] != 0
+        rendered_image[mask]    = rendered_image[mask] / rendered_alpha[mask]
+        rendered_depth[mask]    = rendered_depth[mask] / rendered_alpha[mask]
+        rendered_semantic[mask] = rendered_semantic[mask] / rendered_alpha[mask]
+
+        # assume the depth points form the 'surface' and generate psudo surface normal for regularizations.
+        surf_normal = depth_to_normal_batch(
+            world_view_transform, full_proj_transform, rendered_depth, self.cfg.normal_space)
+        # remember to multiply with accum_alpha since render_normal is unnormalized.
+        # surf_normal = surf_normal * rendered_alpha
+
+        comp_rgb        = rendered_image
+        opacity         = rendered_alpha
+        comp_semantic   = rendered_semantic
+        comp_depth      = rendered_depth
+        comp_normal     = surf_normal
+
+        return \
+            comp_rgb, \
+            opacity, \
+            comp_semantic, \
+            comp_depth, \
+            comp_normal, \
+            means2d, \
+            radii, \
+            local_mask
