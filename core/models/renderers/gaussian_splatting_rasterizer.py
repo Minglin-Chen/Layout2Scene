@@ -20,7 +20,7 @@ from core.utils.point_utils import depth_to_normal_batch
 class GaussianSplattingRasterizer(Rasterizer):
     @dataclass
     class Config(Rasterizer.Config):
-        backend: str                = 'vanilla'
+        backend: str                = 'gsplat'
 
         depth_type: str             = 'inverse'         # options: 'raw', 'inverse', etc
         depth_norm_radius: float    = 1.0
@@ -183,13 +183,10 @@ class GaussianSplattingRasterizer(Rasterizer):
         return out
          
     def __splatting_one(
-        self, means3D, opacity, scales, rotations, features, semantic, c2w, fovx, fovy, height, width,
+        self, means3D, opacity, scales, rotations, features, semantic, means2D, c2w, fovx, fovy, height, width,
     ) -> tuple[Float[Tensor, "..."]]:
         world_view_transform, full_proj_transform, camera_center = \
             get_cam_info_gaussian(c2w, fovx, fovy, self.cfg.znear, self.cfg.zfar)
-
-        means2D = torch.zeros_like(means3D, dtype=means3D.dtype, requires_grad=True, device=means3D.device)
-        if self.training: means2D.retain_grad()
 
         # Set up rasterization configuration
         rasterizer = GaussianRasterizer(raster_settings=GaussianRasterizationSettings(
@@ -252,9 +249,8 @@ class GaussianSplattingRasterizer(Rasterizer):
         comp_semantic   = rendered_semantic
         comp_depth      = rendered_depth
         comp_normal     = surf_normal
-        radii           = radii / float(max(width, height))
 
-        return comp_rgb, opacity, comp_semantic, comp_depth, comp_normal, means2D, radii
+        return comp_rgb, opacity, comp_semantic, comp_depth, comp_normal, radii
     
     def __splatting_batch_vanilla(
         self, 
@@ -274,19 +270,14 @@ class GaussianSplattingRasterizer(Rasterizer):
             self.geometry.get_global_params() if not local else self.geometry.get_local_params(local_index)
 
         # rendering
-        # B, N = c2w.shape[0], self.geometry.get_xyz.shape[0]
-        # means2D = torch.zeros((B,N,3), dtype=means3D.dtype, requires_grad=True, device=means3D.device)
-        # if self.training: means2D.retain_grad()
+        B, N    = c2w.shape[0], means3D.shape[0]
+        means2D = torch.zeros((B,N,3), requires_grad=True).to(means3D)
+        if self.training: means2D.retain_grad()
 
-        # radii = torch.zeros((B,N), dtype=means3D.dtype, device=means3D.device)
-        
-        rgb_list, opacity_list, semantic_list, depth_list, normal_list, mean2d_list, radii_list = \
-            [], [], [], [], [], [], []
-        for i, (_c2w, _fovx, _fovy) in enumerate(zip(c2w, fovx, fovy)):
-            # _means2D = means2D[i] if not local else means2D[i][local_mask]
-
-            _rgb, _opacity, _semantic, _depth, _normal, _means2d, _radii = self.__splatting_one(
-                means3D, opacity, scales, rotations, features, semantic,
+        rgb_list, opacity_list, semantic_list, depth_list, normal_list, radii_list = [], [], [], [], [], []
+        for i, (_c2w, _fovx, _fovy, _means2D) in enumerate(zip(c2w, fovx, fovy, means2D)):
+            _rgb, _opacity, _semantic, _depth, _normal, _radii = self.__splatting_one(
+                means3D, opacity, scales, rotations, features, semantic, _means2D,
                 _c2w, _fovx, _fovy, height, width)
             
             rgb_list.append(_rgb)
@@ -294,15 +285,9 @@ class GaussianSplattingRasterizer(Rasterizer):
             semantic_list.append(_semantic)
             depth_list.append(_depth)
             normal_list.append(_normal)
-            mean2d_list.append(_means2d)
             radii_list.append(_radii)
 
-            # if local: 
-            #     radii[i][local_mask] = _radii.to(radii)
-            # else: 
-            #     radii[i] = _radii.to(radii)
-
-        # radii /= float(max(width, height))
+        radii = torch.stack(radii_list).to(means3D) / float(max(width, height))
 
         return \
             torch.cat(rgb_list), \
@@ -310,8 +295,8 @@ class GaussianSplattingRasterizer(Rasterizer):
             torch.cat(semantic_list), \
             torch.cat(depth_list), \
             torch.cat(normal_list), \
-            torch.stack(mean2d_list), \
-            torch.stack(radii_list), \
+            means2D, \
+            radii, \
             local_mask
     
     def __splatting_batch_gsplat(
