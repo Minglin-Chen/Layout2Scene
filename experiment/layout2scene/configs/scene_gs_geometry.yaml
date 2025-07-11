@@ -1,0 +1,191 @@
+name: "scene_gs_geometry"
+tag: "${rmspace:${system.geometry_prompt_processor.global_prompt_processor.prompt},_}"
+exp_root_dir: "outputs"
+seed: 42
+
+data_type: "global-local-camera-datamodule"
+data:
+  global_camera_type: "layout-aware-camera-datamodule"
+  global_camera:
+    batch_size: 1
+    width: 512
+    height: 512
+    fovy_range: [55., 55.]
+    camera_perturb: 0.
+    up_perturb: 0.
+    eval_fovy_deg: 55.
+    test_all: true
+    camera_path: ???
+
+  local_camera_type: "random-multiview-camera-datamodule"
+  local_camera:
+    batch_size: 1
+    width: 128
+    height: 128
+    camera_distance_range: [0.8, 1.0]
+    relative_distance: true
+    fovy_range: [40., 45.]
+    elevation_range: [0., 30.]
+    camera_perturb: 0.0
+    center_perturb: 0.0
+    up_perturb: 0.0
+    eval_elevation_deg: 15.
+    eval_camera_distance: 3.0
+    eval_fovy_deg: 45.
+    n_view: 4
+
+system_type: "layout2gs-system"
+system:
+  mode: "geometry"
+
+  local_geometry_latent_steps: ${trainer.max_steps}
+
+  geometry_type: "gaussian-model"
+  geometry:
+    is_local_space: true
+    local_scale: 1.0
+    init_strategy: "from_layout"
+    init_file_path: ???
+    init_point_strategy: "random_cube"
+    init_num_points: 1000
+    radius: 0.1
+    densify_grad_threshold: 0.01
+    opacity_threshold: 0.01
+    view_size_threshold: 0.0
+    world_size_threshold: 0.4
+    percent_dense: 0.04
+    densify_until_step: -1
+    densify_interval: 400       # ${trainer.max_steps} * 0.1
+    opacity_reset_interval: 400 # ${trainer.max_steps} * 0.1
+    use_sh: true
+    sh_degree: 0
+    prune_out_of_box: false
+
+  material_type: "no-material" # unused
+
+  background_type: "global-local-background"
+  background:
+    global_background_type: "room-structure-background"
+    global_background:
+      init_strategy: "from_layout"
+      init_file_path: ???
+    
+    local_background_type: "no-background"
+    local_background:
+      color_strategy: "random_flip"
+      depth_value: 5.
+
+  renderer_type: "gaussian-splatting-rasterizer"
+  renderer:
+    depth_type: 'inverse_adaptive'
+    depth_blending: true
+    depth_type_local: 'norm_radius'
+    depth_norm_radius: 1.732
+    depth_blending_local: true
+
+  layout_renderer_type: "layout-rasterizer"
+  layout_renderer:
+    layout_path: ???
+
+  geometry_prompt_processor_type: "global-local-prompt-processor"
+  geometry_prompt_processor:
+    global_prompt_processor_type: "stable-diffusion-prompt-processor"
+    global_prompt_processor:
+      pretrained_model_name_or_path: "runwayml/stable-diffusion-v1-5"
+      prompt: ""
+      negative_prompt: "low quality"
+    local_prompt_processor_type: "stable-diffusion-prompt-processor"
+    local_prompt_processor:
+      pretrained_model_name_or_path: "runwayml/stable-diffusion-v1-5"
+      negative_prompt: "low quality"
+    local_prompt_init_strategy: "from_layout"
+    local_prompt_init_file_path: ???
+    
+  # ctrl_geometry_guidance_type: "multi-controlnet-guidance"
+  # ctrl_geometry_guidance:
+  #   pretrained_model_name_or_path: "nexuslrf/nd-diffusion"
+  #   controlnet_pretrained_model_name_or_path: ["../../checkpoint/SemNDDiffusion"]
+  #   guidance_scale: 100.
+  #   guidance_type: sds
+  #   weighting_strategy: fantasia3d
+  #   min_step_percent: [0, 0.98, 0.02, 4000] # ${trainer.max_steps}
+  #   max_step_percent: [0, 0.98, 0.02, 4000] # ${trainer.max_steps}
+  #   view_dependent_prompting: false
+  #   use_img_loss: false
+  #   controlnet_conditioning_scale: [1.0]
+  #   controlnet_guess_mode: true
+  #   condition_keys: ["layout"]
+
+  local_geometry_guidance_type: "multiview-nddiffusion-guidance"
+  local_geometry_guidance:
+    pretrained_config: "../../checkpoint/nddiffusion/txtcond_mvsd-4-objaverse_finetune_wovae.yaml"
+    pretrained_model_name_or_path: "../../checkpoint/nddiffusion/nd_mv_ema.ckpt"
+    clip_pretrained_model_name_or_path: "openai/clip-vit-large-patch14"
+    n_view: ${data.local_camera.n_view}
+    rotate_z: true
+    guidance_scale: 50.
+    weighting_strategy: fantasia3d
+    min_step_percent: [0, 0.98, 0.02, 4000] # ${trainer.max_steps}
+    max_step_percent: [0, 0.98, 0.02, 4000] # ${trainer.max_steps}
+    view_dependent_prompting: true
+    use_img_loss: false
+
+  freq:
+    guidance_eval: -1
+
+  loggers:
+    wandb:
+      enable: false
+      project: "threestudio"
+      name: None
+
+  loss:
+    lambda_ctrl_geometry_sds: 1.
+    lambda_ctrl_geometry_sds_img: 0.
+    lambda_local_geometry_sds: 1.
+    lambda_local_geometry_sds_img: 0.
+    lambda_out_of_box: 10000.
+
+  optimizer:
+    name: Adam
+    args:
+      lr: 0.0
+      eps: 1.e-15
+    params:
+      geometry._xyz:
+        lr: 0.01
+      geometry._features_dc:
+        lr: 0.0
+      geometry._features_rest:
+        lr: 0.0 # Note: ${system.optimizer.params.geometry._features_dc.lr} / 20.
+      geometry._scaling:
+        lr: 0.005
+      geometry._rotation:
+        lr: 0.005
+      geometry._opacity:
+        lr: 0.05
+      background:
+        lr: 0.0
+    _xyz_lr_schedule:
+      lr_init: 0.01
+      lr_final: 0.0002
+      lr_delay_mult: 0.02
+      lr_max_steps: 2400 # ${trainer.max_steps} * 0.6
+    _scaling_lr_schedule:
+      lr_init: 0.05
+      lr_final: 0.001
+      lr_delay_mult: 0.02
+      lr_max_steps: 2400 # ${trainer.max_steps} * 0.6
+
+trainer:
+  max_steps: 4000 # 1000 * N
+  log_every_n_steps: 1
+  num_sanity_val_steps: 0
+  val_check_interval: 100
+  enable_progress_bar: true
+  strategy: 'ddp_find_unused_parameters_true'
+
+checkpoint:
+  save_last: true # save at each validation time
+  save_top_k: -1
+  every_n_train_steps: ${trainer.max_steps}
