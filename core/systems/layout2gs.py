@@ -160,7 +160,7 @@ class Layout2GS(BaseLift3DSystem):
         if 'local' in batch.keys():
             batch_local = batch.pop('local')
             local       = True
-            local_index = 0 # np.random.randint(self.geometry.num_instance)
+            local_index = np.random.randint(self.geometry.num_instance)
             batch_local.update({'local': local, 'local_index': local_index})
             
         out         = self(batch)

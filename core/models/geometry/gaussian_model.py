@@ -52,7 +52,7 @@ class GaussianModel(BaseExplicitGeometry):
         densify_interval: int           = 50
         opacity_reset_interval: int     = -1
 
-        normalize_grad: bool            = False
+        normalize_grad: bool            = True
         densify_grad_threshold: float   = 0.01   
         opacity_threshold: float        = 0.01
         view_size_threshold: float      = 0.0
@@ -591,8 +591,7 @@ class GaussianModel(BaseExplicitGeometry):
     def gradient_synchronization(self):
         if (not torch.distributed.is_available()) or (not torch.distributed.is_initialized()): return
 
-        for k in self.optimizable_keys:
-            param = getattr(self, k)
+        for param in [self._xyz, self._features_dc, self._features_rest, self._scaling, self._rotation, self._opacity]:
             if param.grad is not None:
                 torch.distributed.all_reduce(param.grad.data, op=torch.distributed.ReduceOp.SUM)
                 param.grad.data /= torch.distributed.get_world_size()
@@ -705,21 +704,19 @@ class GaussianModel(BaseExplicitGeometry):
                 viewspace_points.grad.clone()
         
         if self.cfg.normalize_grad:
-            assert False
-            n_cam, height, width = grads.shape[0], image_size[0], image_size[1]
-            grads[..., 0] *= height / 2.0 * n_cam
-            grads[..., 1] *= width / 2.0 * n_cam
+            n_cam, height, width    = grads.shape[0], image_size[0], image_size[1]
+            grads[..., 0]           *= height / 2.0 * n_cam
+            grads[..., 1]           *= width / 2.0 * n_cam
 
         selected    = radii > 0.                # (n_cam, n_point)
         gs_ids      = torch.where(selected)[1]  # (nnz)
         grads       = grads[selected]           # (nnz, 2 or 3)
 
         local_grads = torch.zeros_like(self.xyz_grad_accum)
-        assert local_masks is None
         if local_masks is None:
             local_grads.index_add_(0, gs_ids, grads.norm(dim=-1))
         else:
-            local_grads[local_masks].index_add(0, gs_ids, grads.norm(dim=-1))
+            local_grads[local_masks] = local_grads[local_masks].index_add_(0, gs_ids, grads.norm(dim=-1))
         if torch.distributed.is_available() and torch.distributed.is_initialized():
             torch.distributed.all_reduce(local_grads, op=torch.distributed.ReduceOp.SUM)
         self.xyz_grad_accum += local_grads
@@ -728,10 +725,10 @@ class GaussianModel(BaseExplicitGeometry):
         if local_masks is None:
             local_denom.index_add_(0, gs_ids, torch.ones_like(gs_ids, dtype=torch.float32))
         else:
-            local_denom[local_masks].index_add(0, gs_ids, torch.ones_like(gs_ids, dtype=torch.float32))
+            local_grads[local_masks] = local_grads[local_masks].index_add_(0, gs_ids, torch.ones_like(gs_ids, dtype=torch.float32))
         if torch.distributed.is_available() and torch.distributed.is_initialized():
             torch.distributed.all_reduce(local_denom, op=torch.distributed.ReduceOp.SUM)
-        self.denom          += local_denom
+        self.denom += local_denom
 
         if local_masks is None:
             self.max_radii2D[gs_ids] = torch.maximum(self.max_radii2D[gs_ids], radii[selected])
@@ -920,7 +917,6 @@ class GaussianModel(BaseExplicitGeometry):
             extension_tensor = dict_tensors[group["name"].split('.')[-1]]
             stored_state = optimizer.state.get(group['params'][0], None)
             if stored_state is not None:
-
                 if isinstance(optimizer, torch.optim.Adam) or isinstance(optimizer, torch.optim.AdamW):
                     stored_state["exp_avg"]         = torch.cat((stored_state["exp_avg"], torch.zeros_like(extension_tensor)), dim=0)
                     stored_state["exp_avg_sq"]      = torch.cat((stored_state["exp_avg_sq"], torch.zeros_like(extension_tensor)), dim=0)
@@ -946,16 +942,31 @@ class GaussianModel(BaseExplicitGeometry):
     def __replace_tensor_to_optimizer(self, optimizer, tensor, name):
         optimizable_tensors = {}
         for group in optimizer.param_groups:
-            if group["name"].split('.')[-1] == name:
-                stored_state = optimizer.state.get(group['params'][0], None)
-                stored_state["exp_avg"] = torch.zeros_like(tensor)
-                stored_state["exp_avg_sq"] = torch.zeros_like(tensor)
+            if group["name"].split('.')[-1] != name: continue
+            assert len(group["params"]) == 1
+
+            stored_state = optimizer.state.get(group['params'][0], None)
+            if stored_state is not None:
+                if isinstance(optimizer, torch.optim.Adam) or isinstance(optimizer, torch.optim.AdamW):
+                    stored_state["exp_avg"]         = torch.zeros_like(tensor)
+                    stored_state["exp_avg_sq"]      = torch.zeros_like(tensor)
+                elif isinstance(optimizer, threestudio.systems.optimizers.Adan):
+                    stored_state["exp_avg"]         = torch.zeros_like(tensor)
+                    stored_state["exp_avg_sq"]      = torch.zeros_like(tensor)
+                    stored_state["exp_avg_diff"]    = torch.zeros_like(tensor)
+                    stored_state["neg_pre_grad"]    = torch.zeros_like(tensor)
+                else:
+                    raise NotImplementedError
 
                 del optimizer.state[group['params'][0]]
                 group["params"][0] = nn.Parameter(tensor.requires_grad_(True))
                 optimizer.state[group['params'][0]] = stored_state
 
                 optimizable_tensors[group["name"].split('.')[-1]] = group["params"][0]
+            else:
+                group["params"][0] = nn.Parameter(tensor.requires_grad_(True))
+                optimizable_tensors[group["name"].split('.')[-1]] = group["params"][0]
+
         return optimizable_tensors
 
     def __prune_optimizer(self, optimizer, mask):
@@ -997,7 +1008,7 @@ class GaussianModel(BaseExplicitGeometry):
             knn_dist2, knn_indics = torch.topk(dist2, k=10, largest=False, sorted=False)
         n, m = knn_indics.shape
 
-        # 
+        # features
         loss_feature = None
         if return_feature:
             features = self.get_features.reshape(n,-1)
@@ -1006,7 +1017,7 @@ class GaussianModel(BaseExplicitGeometry):
 
             loss_feature = torch.sum((features[:,None,:] - knn_features).pow_(exponent=2))
 
-        # 
+        # rotation
         loss_rotation = None
         if return_rotation:
             rotation = self.get_rotation
@@ -1016,25 +1027,6 @@ class GaussianModel(BaseExplicitGeometry):
             loss_rotation = torch.sum((rotation[:,None,:] - knn_rotation).pow_(exponent=2))
 
         return loss_feature, loss_rotation
-
-        # with torch.no_grad():
-        #     nn_dist, nn_idx = self.knn(xyz[None], xyz[None])
-        #     # (n,m), (n,m) where m is the number of neighbors
-        #     nn_dist, nn_idx = nn_dist[0], nn_idx[0]
-        
-        # print(nn_dist, nn_idx)
-        # n, m = nn_idx.shape
-
-        # features        = self.get_features.reshape(n,-1)
-        # # with torch.no_grad():
-        # nn_features     = features[nn_idx.reshape(-1)].reshape(n, m, -1).detach()
-        # print(features.shape, nn_features.shape, " <---------------")
-        # print(nn_features)
-        # loss_feature    = torch.mean(features[:,None,:].repeat(1,m,1) - nn_features)
-        # print(loss_feature.shape)
-        # # loss_feature    = (features[:,None,:] - nn_features) ** 2
-        # # loss_feature    = loss_feature.mean()
-        # print(loss_feature.item())
 
     # ouptut
     def export(self, path, fmt='pointcloud'):
