@@ -16,7 +16,8 @@ from threestudio.utils.misc import C, cleanup, parse_version
 from threestudio.utils.ops import perpendicular_component
 from threestudio.utils.typing import *
 
-from diffusers.pipelines.controlnet import MultiControlNetModel
+# from diffusers.pipelines.controlnet import MultiControlNetModel
+from diffusers.models.controlnets.multicontrolnet import MultiControlNetModel
 
 from core.utils.helper import HF_PATH
 
@@ -72,6 +73,10 @@ class MultiControlNetGuidance(BaseObject):
     def configure(self) -> None:
         threestudio.info(f"Loading Multi Control Net ...")
 
+        self.cfg.pretrained_model_name_or_path              = HF_PATH(self.cfg.pretrained_model_name_or_path)
+        self.cfg.controlnet_pretrained_model_name_or_path   = \
+            [HF_PATH(p) for p in self.cfg.controlnet_pretrained_model_name_or_path]
+        
         self.weights_dtype = (
             torch.float16 if self.cfg.half_precision_weights else torch.float32
         )
@@ -80,12 +85,12 @@ class MultiControlNetGuidance(BaseObject):
         if len(ctrlnet_model_name_or_path_list) == 1:
             threestudio.info(f"from one file: {ctrlnet_model_name_or_path_list}")
             controlnet = MultiControlNetModel.from_pretrained(
-                HF_PATH(ctrlnet_model_name_or_path_list[0]),
+                ctrlnet_model_name_or_path_list[0],
                 torch_dtype=self.weights_dtype)
         else:
             threestudio.info(f"from multiple files: {ctrlnet_model_name_or_path_list}")
             controlnet = MultiControlNetModel([
-                ControlNetModel.from_pretrained(HF_PATH(p), torch_dtype=self.weights_dtype) \
+                ControlNetModel.from_pretrained(p, torch_dtype=self.weights_dtype) \
                     for p in ctrlnet_model_name_or_path_list
             ])
 
@@ -97,7 +102,7 @@ class MultiControlNetGuidance(BaseObject):
             "torch_dtype": self.weights_dtype,
         }
         self.pipe = StableDiffusionControlNetPipeline.from_pretrained(
-            HF_PATH(self.cfg.pretrained_model_name_or_path), controlnet=controlnet, **pipe_kwargs,
+            self.cfg.pretrained_model_name_or_path, controlnet=controlnet, **pipe_kwargs,
         ).to(self.device)
 
         if self.cfg.enable_memory_efficient_attention:

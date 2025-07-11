@@ -64,6 +64,9 @@ class ControlNetGuidance(BaseObject):
     def configure(self) -> None:
         threestudio.info(f"Loading Control Net ...")
 
+        self.cfg.pretrained_model_name_or_path              = HF_PATH(self.cfg.pretrained_model_name_or_path)
+        self.cfg.controlnet_pretrained_model_name_or_path   = HF_PATH(self.cfg.controlnet_pretrained_model_name_or_path)
+
         self.weights_dtype = (
             torch.float16 if self.cfg.half_precision_weights else torch.float32
         )
@@ -76,9 +79,9 @@ class ControlNetGuidance(BaseObject):
             "torch_dtype": self.weights_dtype,
         }
         self.pipe = StableDiffusionControlNetPipeline.from_pretrained(
-            HF_PATH(self.cfg.pretrained_model_name_or_path),
+            self.cfg.pretrained_model_name_or_path,
             controlnet=ControlNetModel.from_pretrained(
-                HF_PATH(self.cfg.controlnet_pretrained_model_name_or_path), 
+                self.cfg.controlnet_pretrained_model_name_or_path, 
                 torch_dtype=self.weights_dtype
             ),
             **pipe_kwargs,
