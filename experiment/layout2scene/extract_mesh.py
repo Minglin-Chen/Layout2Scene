@@ -11,6 +11,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+import warnings
+warnings.simplefilter(action='ignore', category=FutureWarning)
+
 from threestudio.utils.ops import get_cam_info_gaussian
 from core.utils.gaussian_utils import load_gaussians
 from core.utils.helper import *
@@ -191,12 +194,12 @@ def save_image(image, path):
 
 
 def extract_mesh_from_tsdf_volume(
-    rgbs, depths, c2ws, fovx, fovy, height, width, scale, 
+    rgbs, depths, c2ws, fovx, fovy, height, width, scale, uv_unwarp=False,
     voxel_size=0.004, sdf_trunc=0.02, depth_trunc=30, impl='uniform_tsdf_volume'
 ):
     volume = None
     if impl == 'uniform_tsdf_volume':
-        interval = scale * 0.2
+        interval = scale * 0.1
         length = scale + interval
         volume = o3d.pipelines.integration.UniformTSDFVolume(
             length=length, # voxel_length = length / resolution
@@ -245,18 +248,24 @@ def extract_mesh_from_tsdf_volume(
     faces           = np.asarray(o3d_mesh.triangles)
     vertex_normals  = np.asarray(o3d_mesh.vertex_normals) if o3d_mesh.has_vertex_normals() else None
 
-    vmapping, faces, uv = xatlas.parametrize(vertices, faces)
-    vertices            = vertices[vmapping]
-    vertex_normals      = vertex_normals[vmapping] if vertex_normals is not None else vertex_normals
+    if uv_unwarp:
+        vmapping, faces, uv = xatlas.parametrize(vertices, faces)
+        vertices            = vertices[vmapping]
+        vertex_normals      = vertex_normals[vmapping] if vertex_normals is not None else vertex_normals
 
     tri_mesh            = trimesh.Trimesh(vertices=vertices, faces=faces, vertex_normals=vertex_normals, process=False)
-    tri_mesh.visual.uv  = uv
+
+    if uv_unwarp:
+        tri_mesh.visual.uv  = uv
 
     return tri_mesh
 
 
 def mesh_extraction(
-    input_path, output_path, is_2dgs, is_local_space, local_scale, height, width, fovy_deg, radius, device
+    input_path, output_path, layout_path, 
+    is_2dgs, is_local_space, local_scale, 
+    height, width, fovy_deg, radius, 
+    uv_unwarp, to_world, device
 ):
     # 1. load Gaussians
     xyz, features, scaling, rotation, opacity, _, max_sh_degree, \
@@ -279,8 +288,31 @@ def mesh_extraction(
     focal                   = fov2focal(fovy, height)
     fovx                    = focal2fov(focal, width)
 
-    # 3. mesh extraction
+    # 3. load layout
+    assert osp.isfile(layout_path)
+    with open(os.path.join(layout_path), 'r') as f:
+        background = json.load(f)['background']
+
+    # background mesh
+    ceiling = trimesh.Trimesh(vertices=background["vertices"], faces=background["faces"]["ceiling"][::-1])
+    ceiling.remove_unreferenced_vertices()
+
+    floor   = trimesh.Trimesh(vertices=background["vertices"], faces=background["faces"]["floor"][::-1])
+    floor.remove_unreferenced_vertices()
+
+    wall    = trimesh.Trimesh(vertices=background["vertices"], faces=background["faces"]["walls"][::-1])
+    wall_meshes = []
+    for wall_face in wall.faces:
+        wall_mesh = trimesh.Trimesh(vertices=background["vertices"], faces=[wall_face])
+        wall_mesh.remove_unreferenced_vertices()
+        wall_meshes.append(wall_mesh)
+    wall    = trimesh.util.concatenate(wall_meshes)
+
+    background_mesh = trimesh.util.concatenate([ceiling, floor, wall])
+
+    # 4. mesh extraction
     num_instance = len(instance_prompt)
+    scene_meshes = []
     for index in range(num_instance):
         local_mask = instance[...,0] == index
 
@@ -291,12 +323,12 @@ def mesh_extraction(
         local_rotation  = rotation[local_mask]
         local_features  = features[local_mask]
 
+        # local transformation params
+        loc = instance_location[index]
+        rot = instance_rotation[index]
+        sz  = instance_size[index].max()[None]
+        
         if not is_local_space:
-            # local transformation params
-            loc = instance_location[index]
-            rot = instance_rotation[index]
-            sz  = instance_size[index].max()[None]
-
             # transform to local space
             local_xyz       = translate_rotate_scale(local_xyz, local_scale / sz, torch.deg2rad(-rot), - loc)
             local_scaling   = local_scaling * local_scale / sz
@@ -308,10 +340,21 @@ def mesh_extraction(
             c2ws, fovx, fovy, height, width)
 
         # extract mesh
-        mesh = extract_mesh_from_tsdf_volume(rgbs, depths, c2ws, fovx, fovy, height, width, local_scale)
+        mesh = extract_mesh_from_tsdf_volume(rgbs, depths, c2ws, fovx, fovy, height, width, local_scale, uv_unwarp)
+        if to_world:
+            mesh.apply_scale(sz.item())
+            mesh.apply_transform(trimesh.transformations.rotation_matrix(np.deg2rad(rot[2].item()), [0, 0, 1]))
+            mesh.apply_translation(loc.cpu().numpy().tolist())
         mesh_path = os.path.join(output_path, f'{index}.ply')
         os.makedirs(os.path.dirname(mesh_path), exist_ok=True)
         mesh.export(mesh_path)
+
+        # transform to scene
+        if not to_world:
+            mesh.apply_scale(sz.item())
+            mesh.apply_transform(trimesh.transformations.rotation_matrix(np.deg2rad(rot[2].item()), [0, 0, 1]))
+            mesh.apply_translation(loc.cpu().numpy().tolist())
+        scene_meshes.append(mesh)
 
         # # debug
         # for i, (rgb, mask, depth, normal) in enumerate(zip(rgbs, masks, depths, normals)):
@@ -324,12 +367,17 @@ def mesh_extraction(
         #     normal = (normal + 1.0) * 0.5
         #     save_image(normal, os.path.join(output_path, 'images', f'{index}', f'normal_{i}.jpg'))
 
+    # scene_meshes.append(background_mesh)
+    trimesh.util.concatenate(scene_meshes).export(os.path.join(output_path, '..', f'scene-{osp.basename(output_path)}.ply'))
+    background_mesh.export(os.path.join(output_path, '..', f'background-{osp.basename(output_path)}.ply'))
+
 
 if __name__=='__main__':
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('--input_path', type=str, default='gaussians-it4000-test', help='input path')
     parser.add_argument('--output_path', type=str, default='gs2mesh-it4000-test', help='output path')
+    parser.add_argument('--layout_path', type=str, default='', help='layout path')
     # Gaussian
     parser.add_argument('--is_2dgs', action='store_true', help='2DGS or 3DGS')
     parser.add_argument('--is_local_space', action='store_true', help='parse the file in local space')
@@ -340,12 +388,15 @@ if __name__=='__main__':
     parser.add_argument('--fovy_deg', type=float, default=45.0, help='camera y-axis fov (degree)')
     parser.add_argument('--radius', type=float, default=3.0, help='camera radius')
     # Others
+    parser.add_argument("--uv_unwarp", action="store_true", help="enable UV unwarpping")
+    parser.add_argument("--to_world", action="store_true", help="transform mesh to world space")
     parser.add_argument('--device', type=str, default='cuda:0', help='GPU device')
     args = parser.parse_args()
 
     mesh_extraction(
         args.input_path, 
         args.output_path,
+        layout_path=args.layout_path,
         is_2dgs=args.is_2dgs,
         is_local_space=args.is_local_space,
         local_scale=args.local_scale,
@@ -353,5 +404,7 @@ if __name__=='__main__':
         width=args.width,
         fovy_deg=args.fovy_deg,
         radius=args.radius,
+        uv_unwarp=args.uv_unwarp,
+        to_world=args.to_world,
         device=args.device
     )

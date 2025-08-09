@@ -48,7 +48,7 @@ system:
     init_file_path: ???
     init_point_strategy: "random_cube"
     init_num_points: 1000
-    radius: 0.1
+    radius: 0.5
     densify_grad_threshold: 0.01
     opacity_threshold: 0.01
     view_size_threshold: 0.0
@@ -56,7 +56,6 @@ system:
     percent_dense: 0.04
     densify_until_step: -1
     densify_interval: 400       # ${trainer.max_steps} * 0.1
-    opacity_reset_interval: 400 # ${trainer.max_steps} * 0.1
     use_sh: true
     sh_degree: 0
     prune_out_of_box: false
@@ -104,8 +103,8 @@ system:
   # ctrl_geometry_guidance_type: "multi-controlnet-guidance"
   # ctrl_geometry_guidance:
   #   pretrained_model_name_or_path: "nexuslrf/nd-diffusion"
-  #   controlnet_pretrained_model_name_or_path: ["../../checkpoint/SemNDDiffusion"]
-  #   guidance_scale: 100.
+  #   controlnet_pretrained_model_name_or_path: ["../../checkpoint/LayoutGeoDiffusion"]
+  #   guidance_scale: 7.5
   #   guidance_type: sds
   #   weighting_strategy: fantasia3d
   #   min_step_percent: [0, 0.98, 0.02, 4000] # ${trainer.max_steps}
@@ -114,7 +113,7 @@ system:
   #   use_img_loss: false
   #   controlnet_conditioning_scale: [1.0]
   #   controlnet_guess_mode: true
-  #   condition_keys: ["layout"]
+  #   zcondition_keys: ["layout"]
 
   local_geometry_guidance_type: "multiview-nddiffusion-guidance"
   local_geometry_guidance:

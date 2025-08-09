@@ -29,7 +29,7 @@ from threestudio.utils.misc import get_rank
 from threestudio.utils.ops import get_mvp_matrix, get_projection_matrix
 from threestudio.utils.typing import *
 
-from launch_layout2gs import load_custom_modules
+from experiment.layout2scene.launch_layout2scene import load_custom_modules
 from core.utils.gaussian_utils import load_gaussians
 
 

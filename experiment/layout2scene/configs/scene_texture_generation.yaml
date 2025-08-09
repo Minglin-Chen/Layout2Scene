@@ -11,7 +11,7 @@ data:
   fovy_range: [30., 60.]
   camera_perturb: 0.
   up_perturb: 0.
-  eval_fovy_deg: 60.
+  eval_fovy_deg: 55.
   test_all: true
   camera_path: ???
 
