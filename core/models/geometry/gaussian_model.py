@@ -11,7 +11,7 @@ import torch.nn.functional as F
 import threestudio
 from threestudio.models.geometry.base import BaseExplicitGeometry
 from threestudio.utils.typing import *
-from threestudio.utils.misc import get_device
+from threestudio.utils.misc import get_device, _distributed_available, broadcast
 from core.utils.helper import *
 from core.utils.ade20k_protocol import ade20k_label2color
 from core.utils.gaussian_utils import save_gaussians, load_gaussians
@@ -589,12 +589,12 @@ class GaussianModel(BaseExplicitGeometry):
     # optimization
     @torch.no_grad()
     def gradient_synchronization(self):
-        if (not torch.distributed.is_available()) or (not torch.distributed.is_initialized()): return
+        if not _distributed_available(): return
 
         for param in [self._xyz, self._features_dc, self._features_rest, self._scaling, self._rotation, self._opacity]:
             if param.grad is not None:
                 torch.distributed.all_reduce(param.grad.data, op=torch.distributed.ReduceOp.SUM)
-                param.grad.data /= torch.distributed.get_world_size()
+                # param.grad.data /= torch.distributed.get_world_size()
 
     # scheduler
     def configure_schedulers(self, cfg):
@@ -717,7 +717,7 @@ class GaussianModel(BaseExplicitGeometry):
             local_grads.index_add_(0, gs_ids, grads.norm(dim=-1))
         else:
             local_grads[local_masks] = local_grads[local_masks].index_add_(0, gs_ids, grads.norm(dim=-1))
-        if torch.distributed.is_available() and torch.distributed.is_initialized():
+        if _distributed_available():
             torch.distributed.all_reduce(local_grads, op=torch.distributed.ReduceOp.SUM)
         self.xyz_grad_accum += local_grads
 
@@ -725,8 +725,8 @@ class GaussianModel(BaseExplicitGeometry):
         if local_masks is None:
             local_denom.index_add_(0, gs_ids, torch.ones_like(gs_ids, dtype=torch.float32))
         else:
-            local_grads[local_masks] = local_grads[local_masks].index_add_(0, gs_ids, torch.ones_like(gs_ids, dtype=torch.float32))
-        if torch.distributed.is_available() and torch.distributed.is_initialized():
+            local_denom[local_masks] = local_denom[local_masks].index_add_(0, gs_ids, torch.ones_like(gs_ids, dtype=torch.float32))
+        if _distributed_available():
             torch.distributed.all_reduce(local_denom, op=torch.distributed.ReduceOp.SUM)
         self.denom += local_denom
 
@@ -734,7 +734,7 @@ class GaussianModel(BaseExplicitGeometry):
             self.max_radii2D[gs_ids] = torch.maximum(self.max_radii2D[gs_ids], radii[selected])
         else:
             self.max_radii2D[local_masks][gs_ids] = torch.maximum(self.max_radii2D[local_masks][gs_ids], radii[selected])
-        if torch.distributed.is_available() and torch.distributed.is_initialized():
+        if _distributed_available():
             torch.distributed.all_reduce(self.max_radii2D, op=torch.distributed.ReduceOp.MAX)
 
     def __densify_and_prune(self, optimizer):
@@ -774,8 +774,9 @@ class GaussianModel(BaseExplicitGeometry):
         torch.cuda.empty_cache()
 
     def __densify_and_clone(self, optimizer, xyz_grad_avg):
-        selected = torch.where(xyz_grad_avg >= self.cfg.densify_grad_threshold, True, False)
-        selected = torch.logical_and(selected, self.get_scaling.max(dim=-1).values <= self.cfg.percent_dense)
+        selected = torch.logical_and(
+                        xyz_grad_avg >= self.cfg.densify_grad_threshold, 
+                        self.get_scaling.max(dim=-1).values <= self.cfg.percent_dense)
 
         new_xyz             = self._xyz[selected]
         new_features_dc     = self._features_dc[selected]
@@ -808,14 +809,16 @@ class GaussianModel(BaseExplicitGeometry):
         padded_xyz_grad_avg = torch.zeros((n_pts)).to(xyz_grad_avg)
         padded_xyz_grad_avg[:xyz_grad_avg.shape[0]] = xyz_grad_avg
 
-        selected = torch.where(padded_xyz_grad_avg >= self.cfg.densify_grad_threshold, True, False)
-        selected = torch.logical_and(selected, self.get_scaling.max(dim=-1).values > self.cfg.percent_dense)
+        selected = torch.logical_and(
+                        padded_xyz_grad_avg >= self.cfg.densify_grad_threshold, 
+                        self.get_scaling.max(dim=-1).values > self.cfg.percent_dense)
 
         stds    = self.get_scaling[selected].repeat(N,1)
         if self.cfg.is_2dgs:
             stds = torch.cat([stds, torch.zeros_like(stds[:,:1])], dim=-1)
         means   = torch.zeros_like(stds)
         samples = torch.normal(mean=means, std=stds)
+        if _distributed_available(): broadcast(samples)
 
         rots                = quaternion_to_rotation_matrix(self.get_rotation[selected]).repeat(N,1,1)
         new_xyz             = torch.bmm(rots, samples.unsqueeze(-1)).squeeze(-1) + self.get_xyz[selected].repeat(N, 1)
@@ -998,6 +1001,14 @@ class GaussianModel(BaseExplicitGeometry):
                 optimizable_tensors[group["name"].split('.')[-1]] = group["params"][0]
 
         return optimizable_tensors
+
+    def refresh_optimizer(self, optimizer):
+        self._xyz           = self.__replace_tensor_to_optimizer(optimizer, self._xyz.detach().clone(), '_xyz')['_xyz']
+        self._features_dc   = self.__replace_tensor_to_optimizer(optimizer, self._features_dc.detach().clone(), '_features_dc')['_features_dc']
+        self._features_rest = self.__replace_tensor_to_optimizer(optimizer, self._features_rest.detach().clone(), '_features_rest')['_features_rest']
+        self._scaling       = self.__replace_tensor_to_optimizer(optimizer, self._scaling.detach().clone(), '_scaling')['_scaling']
+        self._rotation      = self.__replace_tensor_to_optimizer(optimizer, self._rotation.detach().clone(), '_rotation')['_rotation']
+        self._opacity       = self.__replace_tensor_to_optimizer(optimizer, self._opacity.detach().clone(), '_opacity')['_opacity']
 
     # regularization
     def total_variation(self, return_feature=True, return_rotation=True):

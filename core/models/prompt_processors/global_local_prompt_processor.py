@@ -29,6 +29,8 @@ class GlobalLocalPromptProcessor(BaseObject):
 
         local_prompt_init_strategy: str     = "none"
         local_prompt_init_file_path: str    = ""
+        local_additional_prompt: str        = ""
+        local_prompt_layout: str            = ""
 
     cfg: Config
 
@@ -54,7 +56,15 @@ class GlobalLocalPromptProcessor(BaseObject):
             with open(self.cfg.local_prompt_init_file_path, 'r') as f:
                 bbox = json.load(f)['bbox']
             for b in bbox:
-                self.local_prompts.append(b['prompt'])
+                text_prompt = b['prompt']
+                if self.cfg.local_additional_prompt != '':
+                    text_prompt = b['prompt'] + ', ' + self.cfg.local_additional_prompt
+                self.local_prompts.append(text_prompt)
+            if self.cfg.local_prompt_layout != '':
+                text_prompt = self.cfg.local_prompt_layout
+                if self.cfg.local_additional_prompt != '':
+                    text_prompt = text_prompt + ', ' + self.cfg.local_additional_prompt
+                self.local_prompts.append(text_prompt)
         else:
             raise NotImplementedError
         

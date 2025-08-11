@@ -9,7 +9,7 @@ import threestudio
 from threestudio.systems.base import BaseLift3DSystem
 from threestudio.utils.ops import binary_cross_entropy, dot
 from threestudio.utils.typing import *
-from threestudio.utils.misc import get_device
+from threestudio.utils.misc import get_device, get_rank, _distributed_available, barrier
 
 from core.utils.helper import *
 
@@ -152,7 +152,10 @@ class Layout2GS(BaseLift3DSystem):
             # inspect the initialized point cloud
             # pointcloud_init_path = self.get_save_path(os.path.join('export', 'pointcloud_init.ply'))
             # self.geometry.export(pointcloud_init_path, fmt='pointcloud')
-            pass
+
+            # ensure to not use the internal gradient synchronization by pytorch lightning
+            if _distributed_available():
+                self.geometry.refresh_optimizer(self.optimizers())
 
     def training_step(self, batch):
         # rendering
@@ -160,7 +163,11 @@ class Layout2GS(BaseLift3DSystem):
         if 'local' in batch.keys():
             batch_local = batch.pop('local')
             local       = True
-            local_index = np.random.randint(self.geometry.num_instance)
+            if not _distributed_available():
+                local_index = np.random.randint(self.geometry.num_instance)
+            else:
+                local_index = \
+                    (self.true_global_step * torch.distributed.get_world_size() + get_rank()) % self.geometry.num_instance
             batch_local.update({'local': local, 'local_index': local_index})
             
         out         = self(batch)
@@ -202,6 +209,7 @@ class Layout2GS(BaseLift3DSystem):
         loss = self.__ctrl_appearance_guidance_step(batch, out, prompt_utils, loss, guidance_eval)
 
         loss = self.__local_geometry_guidance_step(batch_local, out_local, local_geometry_prompt_utils, loss, guidance_eval)
+        loss = self.__local_appearance_guidance_step(batch_local, out_local, local_prompt_utils, loss, guidance_eval)
 
         # regularization
         if hasattr(self.cfg.loss, 'lambda_sparsity') and self.C(self.cfg.loss.lambda_sparsity) > 0:
@@ -456,6 +464,29 @@ class Layout2GS(BaseLift3DSystem):
 
         return loss
 
+    def __local_appearance_guidance_step(self, batch, out, prompt_utils, loss, guidance_eval):
+        if self.local_appearance_guidance is None: return loss
+        assert self.cfg.mode == 'appearance'
+
+        guidance_out = self.local_appearance_guidance(
+            out["comp_rgb"], prompt_utils, 
+            self.__collect_inputs(out, self.local_appearance_guidance.cfg.condition_keys, False), 
+            **batch, rgb_as_latents=False, guidance_eval=guidance_eval
+        )
+ 
+        for name, value in guidance_out.items():
+            if name.startswith("loss_"):
+                self.log(f"train/local_appearance_guidance/{name}", value.item())
+                loss += value * self.C(self.cfg.loss[name.replace("loss_", "lambda_local_appearance_")])
+
+        if guidance_eval:
+            self.guidance_evaluation_save(
+                out["comp_rgb"].detach()[: guidance_out["eval"]["bs"]], 
+                guidance_out["eval"], "local_appearance_guidance"
+            )
+
+        return loss
+
     def validation_step(self, batch, batch_idx):
         out = self(batch)
         self.save_image_grid(
@@ -490,7 +521,8 @@ class Layout2GS(BaseLift3DSystem):
         )
 
     def on_validation_epoch_end(self):
-        pass
+        barrier()
+        if not self.trainer.is_global_zero: return
 
     def test_step(self, batch, batch_idx):
         out = self(batch)
@@ -531,6 +563,9 @@ class Layout2GS(BaseLift3DSystem):
         )
 
     def on_test_epoch_end(self) -> None:
+        barrier()
+        if not self.trainer.is_global_zero: return
+
         self.save_img_sequence(
             f"it{self.true_global_step}-test",
             f"it{self.true_global_step}-test",
@@ -542,13 +577,14 @@ class Layout2GS(BaseLift3DSystem):
         )
 
         if self.is_gaussian_geometry:
-            gaussians_path  = self.get_save_path(
-                os.path.join('export', f'gaussians-it{self.true_global_step}-test'))
-            mesh_path = self.get_save_path(
-                os.path.join('export', f'mesh-it{self.true_global_step}-test'))
-            
-            self.geometry.export(gaussians_path, fmt='gaussians')
-            self.geometry.export(mesh_path, fmt='mesh')
+            self.geometry.export(
+                self.get_save_path(os.path.join('export', f'gaussians-it{self.true_global_step}-test')), 
+                fmt='gaussians'
+            )
+            # self.geometry.export(
+            #     self.get_save_path(os.path.join('export', f'mesh-it{self.true_global_step}-test')), 
+            #     fmt='mesh'
+            # )
 
         else:
             if self.cfg.exporter_type not in ["", "none"]:

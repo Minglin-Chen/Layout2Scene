@@ -64,34 +64,28 @@ class TexturedMesh(BaseExplicitGeometry):
 
         # initialization
         if self.cfg.init_strategy == 'from_scenetex':
-            v_pos, t_idx, v_nrm, v_uv, v_sem, v_idx, f_idx = self._init_from_scenetex()
-        elif self.cfg.init_strategy == 'from_file':
-            v_pos, t_idx, v_nrm, v_uv, v_sem, v_idx, f_idx = self._init_from_file()
+            v_pos, t_idx, v_nrm, v_uv, v_sem, v_idx, f_idx, instance_location, instance_size, instance_rotation = \
+                self._init_from_scenetex()
         elif self.cfg.init_strategy == 'from_layout':
-            v_pos, t_idx, v_nrm, v_uv, v_sem, v_idx, f_idx = self._init_from_layout()
+            v_pos, t_idx, v_nrm, v_uv, v_sem, v_idx, f_idx, instance_location, instance_size, instance_rotation = \
+                self._init_from_layout()
         else:
             raise NotImplementedError
         
-        self.v_pos: Float[Tensor, "Nv 3"]
-        self.register_buffer("v_pos", v_pos)
-        
-        self.t_idx: Float[Tensor, "Nf 3"]
-        self.register_buffer("t_idx", t_idx)
-        
-        self.v_nrm: Float[Tensor, "Nv 3"]
-        self.register_buffer("v_nrm", v_nrm)
-        
-        self.v_uv: Float[Tensor, "Nv 2"]
-        self.register_buffer("v_uv", v_uv)
-        
-        self.v_sem: Float[Tensor, "Nv 3"]
-        self.register_buffer("v_sem", v_sem)
+        self.v_pos              = nn.Parameter(v_pos, requires_grad=False)              # (Nv,3)
+        self.t_idx              = nn.Parameter(t_idx, requires_grad=False)              # (Nf,3)
+        self.v_nrm              = nn.Parameter(v_nrm, requires_grad=False)              # (Nv,3)
+        self.v_uv               = nn.Parameter(v_uv, requires_grad=False)               # (Nv,2)
+        self.v_sem              = nn.Parameter(v_sem, requires_grad=False)              # (Nv,3)
 
-        self.v_idx: Float[Tensor, "Nv"]
-        self.register_buffer("v_idx", v_idx)
+        self.v_idx              = nn.Parameter(v_idx, requires_grad=False)              # (No+n,2)
+        self.f_idx              = nn.Parameter(f_idx, requires_grad=False)              # (No+n,2)
 
-        self.f_idx: Float[Tensor, "Nf"]
-        self.register_buffer("f_idx", f_idx)
+        self.instance_location  = nn.Parameter(instance_location, requires_grad=False)  # (No,3)
+        self.instance_size      = nn.Parameter(instance_size, requires_grad=False)      # (No,3)
+        self.instance_rotation  = nn.Parameter(instance_rotation, requires_grad=False)  # (No,3)
+
+        self.num_instance       = self.instance_location.shape[0] + 1
 
         # texture (learnable)
         if self.cfg.texture_type == 'vertex':
@@ -189,35 +183,11 @@ class TexturedMesh(BaseExplicitGeometry):
         v_idx   = torch.tensor(np.array(v_idx), dtype=torch.long)
         f_idx   = torch.tensor(np.array(f_idx), dtype=torch.long)
         
-        return v_pos, t_idx, v_nrm, v_uv, v_sem, v_idx, f_idx
+        instance_location   = torch.zeros((v_idx.shape[0]-1, 3), dtype=torch.float32)
+        instance_size       = torch.ones((v_idx.shape[0]-1, 3), dtype=torch.float32)
+        instance_rotation   = torch.zeros((v_idx.shape[0]-1, 3), dtype=torch.float32)
 
-    def _init_from_file(self):
-        mesh = trimesh.load_mesh(self.cfg.init_path)
-
-        v_pos       = torch.as_tensor(mesh.vertices, dtype=torch.float32)
-        v_pos       = torch.stack([v_pos[:,0], -v_pos[:,2], v_pos[:,1]], dim=1)
-        t_pos_idx   = torch.as_tensor(mesh.faces, dtype=torch.long)
-        v_sem       = torch.zeros_like(v_pos)
-
-        if mesh.vertex_normals is not None:
-            v_nrm = torch.tensor(mesh.vertex_normals, dtype=torch.float32)
-            v_nrm = torch.stack([v_nrm[:,0], -v_nrm[:,2], v_nrm[:,1]], dim=1)
-        else:
-            v_nrm = compute_vertex_normal(v_pos, t_pos_idx)
-
-        if hasattr(mesh.visual, 'uv') and (mesh.visual.uv is not None):
-            v_uv = torch.tensor(mesh.visual.uv, dtype=torch.float32)
-        else:
-            threestudio.info(
-                "Perform UV padding on texture maps to avoid seams, may take a while ..."
-            )
-            vmapping, indices, uvs = uv_unwarpping_xatlas(v_pos, t_pos_idx)
-
-            v_pos       = v_pos[vmapping]
-            t_pos_idx   = indices
-            v_sem       = v_sem[vmapping]
-            v_nrm       = v_nrm[vmapping]
-            v_uv        = uvs
+        return v_pos, t_idx, v_nrm, v_uv, v_sem, v_idx, f_idx, instance_location, instance_size, instance_rotation
 
     def _init_from_layout(self):
         assert os.path.isdir(self.cfg.init_file_path)
@@ -315,7 +285,49 @@ class TexturedMesh(BaseExplicitGeometry):
         v_idx   = torch.tensor(np.array(v_idx), dtype=torch.long)
         f_idx   = torch.tensor(np.array(f_idx), dtype=torch.long)
         
-        return v_pos, t_idx, v_nrm, v_uv, v_sem, v_idx, f_idx
+        return v_pos, t_idx, v_nrm, v_uv, v_sem, v_idx, f_idx, instance_location, instance_size, instance_rotation
+
+    def get_global_params(self):
+        vertex_pos  = self.v_pos
+        face_idx    = self.t_idx
+        vertex_nrm  = self.v_nrm
+        vertex_sem  = self.v_sem
+        vertex_uv   = self.v_uv
+        return vertex_pos, face_idx, vertex_nrm, vertex_sem, vertex_uv
+
+    def get_local_params(self, index):
+        n_objects       = self.instance_location.shape[0]
+        is_background   = index >= n_objects
+
+        if is_background:
+            v_start, v_end = self.v_idx[n_objects][0], None
+            f_start, f_end = self.f_idx[n_objects][0], None
+        else:
+            v_start, v_end = self.v_idx[index]
+            f_start, f_end = self.f_idx[index]
+
+        vertex_pos      = self.v_pos[v_start:v_end]
+        face_idx        = self.t_idx[f_start:f_end] - v_start
+        vertex_nrm      = self.v_nrm[v_start:v_end]
+        vertex_sem      = self.v_sem[v_start:v_end]
+        vertex_uv       = self.v_uv[v_start:v_end]
+
+        if is_background:
+            mx, mn  = vertex_pos.max(dim=0)[0], vertex_pos.min(dim=0)[0]
+            sz      = (mx - mn).min()
+            loc     = (mx + mn) * 0.5
+            vertex_pos = (vertex_pos - loc) / sz * 5.
+        else:
+            loc         = self.instance_location[index]
+            rot         = self.instance_rotation[index]
+            sz          = self.instance_size[index].max()[None]
+
+            vertex_pos  = translate_rotate_scale(vertex_pos, 1. / sz, torch.deg2rad(-rot), - loc)
+
+            rot_mat     = euler_to_rotation_matrix(torch.deg2rad(-rot))
+            vertex_nrm  = vertex_nrm @ rot_mat.T
+
+        return vertex_pos, face_idx, vertex_nrm, vertex_sem, vertex_uv
 
     def forward(self, points: Float[Tensor, "*N Di"]) -> Dict[str, Float[Tensor, "..."]]:
         if self.cfg.texture_type == 'uv':

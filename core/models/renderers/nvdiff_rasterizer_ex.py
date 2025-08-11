@@ -51,42 +51,47 @@ class NVDiffRasterizerEx(Rasterizer):
         c2w: Float[Tensor, "B 4 4"],
         height: int,
         width: int,
+        local: bool = False,
+        local_index: Optional[List] = None,
         **kwargs
     ) -> Dict[str, Any]:
         batch_size = mvp_mtx.shape[0]
         
         w2c         = self.c2wtow2c(c2w)
 
+        vertex_pos, face_idx, vertex_nrm, vertex_sem, vertex_uv = \
+            self.geometry.get_global_params() if not local else self.geometry.get_local_params(local_index)
+
         v_pos_clip: Float[Tensor, "B Nv 4"]
-        v_pos_clip  = self.ctx.vertex_transform(self.geometry.v_pos, mvp_mtx)
-        rast, _     = self.ctx.rasterize(v_pos_clip, self.geometry.t_idx, (height, width))
+        v_pos_clip  = self.ctx.vertex_transform(vertex_pos, mvp_mtx)
+        rast, _     = self.ctx.rasterize(v_pos_clip, face_idx, (height, width))
 
         # opacity
         mask        = rast[..., 3:] > 0
-        mask_aa     = self.ctx.antialias(mask.float(), rast, v_pos_clip, self.geometry.t_idx)
+        mask_aa     = self.ctx.antialias(mask.float(), rast, v_pos_clip, face_idx)
 
         # normal [-1,1] -> [0,1]
         if self.cfg.normal_space == 'world':
-            normal, _   = self.ctx.interpolate_one(self.geometry.v_nrm, rast, self.geometry.t_idx)
+            normal, _   = self.ctx.interpolate_one(vertex_nrm, rast, face_idx)
             normal_bg   = torch.zeros_like(normal)
         elif self.cfg.normal_space == 'camera':
-            batch_v_nrm = repeat(self.geometry.v_nrm, "n c -> b n c", b=batch_size)
+            batch_v_nrm = repeat(vertex_nrm, "n c -> b n c", b=batch_size)
             v_nrm       = self.world2camera(batch_v_nrm, w2c)
-            normal, _   = self.ctx.interpolate(v_nrm, rast, self.geometry.t_idx)
+            normal, _   = self.ctx.interpolate(v_nrm, rast, face_idx)
             normal_bg   = torch.zeros_like(normal)
             normal_bg[...,2] = 1.0
         else:
             raise NotImplementedError
         normal      = F.normalize(normal, dim=-1)
         normal_aa   = torch.lerp((normal_bg+1.0)*0.5, (normal+1.0)*0.5, mask.float())
-        normal_aa   = self.ctx.antialias(normal_aa, rast, v_pos_clip, self.geometry.t_idx)
+        normal_aa   = self.ctx.antialias(normal_aa, rast, v_pos_clip, face_idx)
         
         # depth [0,+inf]
-        v_pos       = repeat(self.geometry.v_pos, "n c -> b n c", b=batch_size)
+        v_pos       = repeat(vertex_pos, "n c -> b n c", b=batch_size)
         v_pos       = self.homo_proj(v_pos, w2c)
         z_depth     = - v_pos[..., 2:]
-        depth, _    = self.ctx.interpolate(z_depth, rast, self.geometry.t_idx)
-        depth_aa    = self.ctx.antialias(depth, rast, v_pos_clip, self.geometry.t_idx)
+        depth, _    = self.ctx.interpolate(z_depth, rast, face_idx)
+        depth_aa    = self.ctx.antialias(depth, rast, v_pos_clip, face_idx)
 
         # [0,+inf] -> [0,1]
         if self.cfg.depth_type == 'raw':
@@ -159,22 +164,23 @@ class NVDiffRasterizerEx(Rasterizer):
             raise ValueError(self.cfg.depth_type)
 
         # semantic [0,1]
-        semantic, _ = self.ctx.interpolate_one(self.geometry.v_sem, rast, self.geometry.t_idx)
-        semantic_aa = self.ctx.antialias(semantic, rast, v_pos_clip, self.geometry.t_idx)
+        semantic, _ = self.ctx.interpolate_one(vertex_sem, rast, face_idx)
+        semantic_aa = self.ctx.antialias(semantic, rast, v_pos_clip, face_idx)
 
         # rgb
         selector    = mask[..., 0]
 
-        gb_pos, _   = self.ctx.interpolate_one(self.geometry.v_pos, rast, self.geometry.t_idx)
+        gb_pos, _   = self.ctx.interpolate_one(vertex_pos, rast, face_idx)
         gb_viewdirs = F.normalize(gb_pos - camera_positions[:, None, None, :], dim=-1)
         positions   = gb_pos[selector]
 
         if self.geometry.cfg.texture_type == 'vertex':
-            features    = self.ctx.interpolate_one(self.geometry.v_tex, rast, self.geometry.t_idx)
+            assert not local
+            features    = self.ctx.interpolate_one(self.geometry.v_tex, rast, face_idx)
             features    = features[selector]
             geo_out     = {"features": features}
         elif self.geometry.cfg.texture_type in ['uv', 'field2d']:
-            uv_coord, _ = self.ctx.interpolate_one(self.geometry.v_uv, rast, self.geometry.t_idx)
+            uv_coord, _ = self.ctx.interpolate_one(vertex_uv, rast, face_idx)
             geo_out     = self.geometry(uv_coord[selector])
         elif self.geometry.cfg.texture_type == 'field3d':
             geo_out     = self.geometry(positions)
@@ -191,7 +197,7 @@ class NVDiffRasterizerEx(Rasterizer):
 
         gb_rgb_bg   = self.background(dirs=gb_viewdirs)
         gb_rgb      = torch.lerp(gb_rgb_bg, gb_rgb_fg, mask.float())
-        gb_rgb_aa   = self.ctx.antialias(gb_rgb, rast, v_pos_clip, self.geometry.t_idx)
+        gb_rgb_aa   = self.ctx.antialias(gb_rgb, rast, v_pos_clip, face_idx)
         
         out = {
             "comp_rgb":         gb_rgb_aa,
