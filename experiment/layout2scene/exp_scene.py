@@ -78,7 +78,7 @@ if not osp.exists(camera_path):
 ###################################
 config_path = 'configs/scene_gs_geometry.yaml'
 
-max_steps = 4000 * num_objects // n_gpus
+max_steps = max(4000 * num_objects // n_gpus, 4000)
 command = f'\
     torchrun --nproc_per_node={n_gpus} launch_layout2scene.py \
         --config {config_path} --train --gpu {gpu_str} tag={scene_name} exp_root_dir="{output_root}" \
