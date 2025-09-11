@@ -113,7 +113,7 @@ system:
   #   use_img_loss: false
   #   controlnet_conditioning_scale: [1.0]
   #   controlnet_guess_mode: true
-  #   zcondition_keys: ["layout"]
+  #   condition_keys: ["layout"]
 
   local_geometry_guidance_type: "multiview-nddiffusion-guidance"
   local_geometry_guidance:
@@ -139,7 +139,7 @@ system:
       name: None
 
   loss:
-    lambda_ctrl_geometry_sds: 1.
+    lambda_ctrl_geometry_sds: 0.
     lambda_ctrl_geometry_sds_img: 0.
     lambda_local_geometry_sds: 1.
     lambda_local_geometry_sds_img: 0.
