@@ -143,10 +143,10 @@ system:
     lambda_ctrl_geometry_sds_img: 0.
     lambda_local_geometry_sds: 1.
     lambda_local_geometry_sds_img: 0.
-    lambda_out_of_box: 10000.
+    lambda_out_of_box: 1e6
 
   optimizer:
-    name: Adam
+    name: AdamW
     args:
       lr: 0.0
       eps: 1.e-15
@@ -171,7 +171,7 @@ system:
       lr_delay_mult: 0.02
       lr_max_steps: 2400 # ${trainer.max_steps} * 0.6
     _scaling_lr_schedule:
-      lr_init: 0.05
+      lr_init: 0.005
       lr_final: 0.001
       lr_delay_mult: 0.02
       lr_max_steps: 2400 # ${trainer.max_steps} * 0.6
