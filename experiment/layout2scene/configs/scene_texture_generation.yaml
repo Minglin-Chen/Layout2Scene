@@ -55,8 +55,8 @@ system:
       otype: "VanillaMLP"
       activation: "ReLU"
       output_activation: "none"
-      n_neurons: 64
-      n_hidden_layers: 3
+      n_neurons: 128
+      n_hidden_layers: 5
 
   material_type: "no-material"
   material:
@@ -95,9 +95,9 @@ system:
       "lllyasviel/control_v11p_sd15_normalbae", 
       "lllyasviel/control_v11p_sd15_depth",
     ]
-    guidance_scale: 100.
-    guidance_type: sds
-    weighting_strategy: sds
+    guidance_scale: 7.5
+    guidance_type: isd
+    weighting_strategy: fantasia3d
     min_step_percent: 0.02
     max_step_percent: 0.98
     view_dependent_prompting: false
@@ -114,29 +114,29 @@ system:
       "comp_depth",
     ]
 
-  local_appearance_guidance_type: "multi-controlnet-guidance"
-  local_appearance_guidance:
-    pretrained_model_name_or_path: "runwayml/stable-diffusion-v1-5"
-    controlnet_pretrained_model_name_or_path: [
-      "lllyasviel/control_v11p_sd15_normalbae",
-      # "lllyasviel/control_v11p_sd15_depth",
-    ]
-    guidance_scale: 100.
-    guidance_type: sds
-    weighting_strategy: sds
-    min_step_percent: 0.02
-    max_step_percent: 0.98
-    view_dependent_prompting: true
-    use_img_loss: false
-    controlnet_conditioning_scale: [
-      1.0,
-      # 1.0,
-    ]
-    controlnet_guess_mode: false
-    condition_keys: [
-      "comp_normal", 
-      # "comp_depth",
-    ]
+  # local_appearance_guidance_type: "multi-controlnet-guidance"
+  # local_appearance_guidance:
+  #   pretrained_model_name_or_path: "runwayml/stable-diffusion-v1-5"
+  #   controlnet_pretrained_model_name_or_path: [
+  #     "lllyasviel/control_v11p_sd15_normalbae",
+  #     # "lllyasviel/control_v11p_sd15_depth",
+  #   ]
+  #   guidance_scale: 100.
+  #   guidance_type: sds
+  #   weighting_strategy: sds
+  #   min_step_percent: 0.02
+  #   max_step_percent: 0.98
+  #   view_dependent_prompting: true
+  #   use_img_loss: false
+  #   controlnet_conditioning_scale: [
+  #     1.0,
+  #     # 1.0,
+  #   ]
+  #   controlnet_guess_mode: false
+  #   condition_keys: [
+  #     "comp_normal", 
+  #     # "comp_depth",
+  #   ]
 
   freq:
     guidance_eval: 100
@@ -154,22 +154,23 @@ system:
     lambda_local_appearance_sds_img: 1.
 
   optimizer:
-    name: AdamW
+    name: RAdam
     args:
       lr: 0.0
+      betas: [0.9, 0.99]
       eps: 1.e-15
     params:
       geometry.encoding:
-        lr: 0.05
+        lr: 1e-3
       geometry.network:
-        lr: 0.001
-        weight_decay: 1e-6
+        lr: 1e-3
+        # weight_decay: 1e-6
 
 trainer:
-  max_steps: 30000
+  max_steps: 10000
   log_every_n_steps: 1
   num_sanity_val_steps: 0
-  val_check_interval: 30001
+  val_check_interval: 10001
   enable_progress_bar: true
 
 checkpoint:
