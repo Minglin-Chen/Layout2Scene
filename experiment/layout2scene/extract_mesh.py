@@ -198,7 +198,7 @@ def extract_mesh_from_tsdf_volume(
         length = scale + interval
         volume = o3d.pipelines.integration.UniformTSDFVolume(
             length=length, # voxel_length = length / resolution
-            resolution=128, # voxel_length = length / resolution
+            resolution=256, # voxel_length = length / resolution
             # voxel_length=voxel_size,
             sdf_trunc=sdf_trunc,
             color_type=o3d.pipelines.integration.TSDFVolumeColorType.RGB8,
@@ -248,7 +248,16 @@ def extract_mesh_from_tsdf_volume(
 
     if uv_unwarp:
         print('UV unwarping (may take a while ...)')
+        # - version 1
         vmapping, faces, uv = xatlas.parametrize(vertices, faces)
+        # - version 2
+        # atlas = xatlas.Atlas()
+        # atlas.add_mesh(vertices, faces)
+        # chart_options   = xatlas.ChartOptions()
+        # pack_options    = xatlas.PackOptions()
+        # atlas.generate(chart_options=chart_options, pack_options=pack_options)
+        # vmapping, faces, uv = atlas[0]
+
         vertices            = vertices[vmapping]
         vertex_normals      = vertex_normals[vmapping] if vertex_normals is not None else vertex_normals
 
