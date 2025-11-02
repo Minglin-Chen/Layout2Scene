@@ -1,8 +1,8 @@
 {
     "bbox": [
         {
-            "class": "sofa",
-            "prompt": "Accent Chair",
+            "class": "chair",
+            "prompt": "armchair",
             "location": [
                 0.30000001192092896,
                 -0.20000000298023224,

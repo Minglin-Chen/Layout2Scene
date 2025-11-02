@@ -134,8 +134,8 @@
             ]
         },
         {
-            "class": "sofa",
-            "prompt": "sofa",
+            "class": "chair",
+            "prompt": "armchair",
             "location": [
                 -0.8200605511665344,
                 1.8927719593048096,
@@ -153,8 +153,8 @@
             ]
         },
         {
-            "class": "sofa",
-            "prompt": "sofa",
+            "class": "chair",
+            "prompt": "armchair",
             "location": [
                 -0.6409125328063965,
                 -0.8302822709083557,

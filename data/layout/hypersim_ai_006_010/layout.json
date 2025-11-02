@@ -2,7 +2,7 @@
     "bbox": [
         {
             "class": "door",
-            "prompt": "door",
+            "prompt": "French door",
             "location": [
                 -2.999999761581421,
                 4.458096504211426,
@@ -31,25 +31,6 @@
                 1.3020399808883667,
                 3.291490077972412,
                 1.2999999523162842
-            ],
-            "rotation": [
-                0.0,
-                0.0,
-                90.00000250447816
-            ]
-        },
-        {
-            "class": "cabinet",
-            "prompt": "cabinet",
-            "location": [
-                1.0929687023162842,
-                1.8544560670852661,
-                0.4259116053581238
-            ],
-            "size": [
-                1.3770699501037598,
-                3.285439968109131,
-                0.8518235683441162
             ],
             "rotation": [
                 0.0,
@@ -116,7 +97,7 @@
         },
         {
             "class": "cabinet",
-            "prompt": "cabinet",
+            "prompt": "hutch",
             "location": [
                 4.160651683807373,
                 4.099999904632568,
@@ -154,7 +135,7 @@
         },
         {
             "class": "chair",
-            "prompt": "chair",
+            "prompt": "dining chair",
             "location": [
                 -0.10545588284730911,
                 5.825547695159912,
@@ -173,7 +154,7 @@
         },
         {
             "class": "chair",
-            "prompt": "chair",
+            "prompt": "dining chair",
             "location": [
                 1.1947381496429443,
                 5.815547943115234,
@@ -192,7 +173,7 @@
         },
         {
             "class": "chair",
-            "prompt": "chair",
+            "prompt": "dining chair",
             "location": [
                 -0.8367956876754761,
                 6.826025485992432,
@@ -211,7 +192,7 @@
         },
         {
             "class": "table",
-            "prompt": "table",
+            "prompt": "dining table",
             "location": [
                 0.5494401454925537,
                 6.775667190551758,
@@ -230,7 +211,7 @@
         },
         {
             "class": "chair",
-            "prompt": "chair",
+            "prompt": "dining chair",
             "location": [
                 0.04976514354348183,
                 7.684011936187744,
@@ -249,7 +230,7 @@
         },
         {
             "class": "chair",
-            "prompt": "chair",
+            "prompt": "dining chair",
             "location": [
                 1.089957594871521,
                 7.684061050415039,
@@ -268,7 +249,7 @@
         },
         {
             "class": "chair",
-            "prompt": "chair",
+            "prompt": "dining chair",
             "location": [
                 1.9454835653305054,
                 6.827322006225586,
