@@ -55,7 +55,7 @@ def transform(p, mn, mx, res, s):
     p[...,2]    = p[...,2] * s - 0.5
 
     x, y, z     = p[...,0], p[...,1], p[...,2]
-    p           = np.stack([x,-z,y], axis=-1)
+    p           = np.stack([x,z,-y], axis=-1)
 
     p       = p * res
     scale   = s / extent * res
@@ -88,7 +88,7 @@ def convert(layout_path, scene_name, scene_type, scene_scale, output_path):
     layout_topdown = layout_topdown.transpose([0,2,1])
 
     # cv2.imshow('layout topdown', layout_topdown[0])
-    # cv2.waitKey()
+    # cv2.waitKey(1)
 
     # draw othres
     class_labels, translations, sizes, angles = [], [], [], []
@@ -124,8 +124,10 @@ def convert(layout_path, scene_name, scene_type, scene_scale, output_path):
 
     class_labels    = np.array(class_labels, dtype=np.float32)
     translations    = np.array(translations, dtype=np.float32)
+    translations[...,[0,2]] = translations[...,[2,0]]
     sizes           = np.array(sizes, dtype=np.float32)
-    angles          = np.array(angles, dtype=np.float32)[:,None]
+    sizes[...,[0,2]] = sizes[...,[2,0]]
+    angles          = - np.array(angles, dtype=np.float32)[:,None]
 
     # camera
     cameras_path = osp.join(osp.dirname(layout_path), 'cameras.json')
@@ -155,10 +157,14 @@ def convert(layout_path, scene_name, scene_type, scene_scale, output_path):
     target_coords = np.array(target_coords)
     camera_coords = transform(camera_coords, mn, mx, 1., scene_scale)[0]
     target_coords = transform(target_coords, mn, mx, 1., scene_scale)[0]
-    camera_coords[...,1] *= -1.0
-    target_coords[...,1] *= -1.0
-    camera_coords = np.stack((camera_coords[...,2], camera_coords[...,1], camera_coords[...,0]), axis=-1)
-    target_coords = np.stack((target_coords[...,2], target_coords[...,1], target_coords[...,0]), axis=-1)
+
+    # # DEBUG
+    # camera_coords[...,0] = 0.1
+    # camera_coords[...,1] = 1.
+    # camera_coords[...,2] = 0.
+    # target_coords[...,0] = 0.
+    # target_coords[...,1] = -1.
+    # target_coords[...,2] = 0.
 
     # images
     image_output_path = osp.join(output_path, 'images', scene_name)
@@ -266,7 +272,6 @@ def load_cc3d_layout(path='boxes.npz'):
     for loc, size, angle in zip(translations, sizes, angles):
         angle_deg   = np.rad2deg(angle[0])
         loc         = loc + size * 0.5
-        loc[1]      *= -1.0
         box_mesh    = create_transformed_box(loc, size, angle_deg, 'y')
         layout_meshes.append(box_mesh)
     trimesh.util.concatenate(layout_meshes).export('layout.ply')
@@ -306,36 +311,33 @@ def load_cc3d_layout(path='boxes.npz'):
 
     cv2.imshow('room layout', room_layout[0])
     cv2.imshow('layout topdown', layout_topdown)
-    cv2.waitKey(10)
+    cv2.waitKey()
 
 
 if __name__=='__main__':
     # configuration
-    # - bedroom: 
-    #   hypersim_ai_010_005, setthescene_bedroom
-    # - livingroom: 
-    #   hypersim_ai_001_005, hypersim_ai_006_010, hypersim_ai_010_008, hypersim_ai_022_005, 
-    #   setthescene_dining_room, setthescene_living_room
-
     scene_names = [\
-        'hypersim_ai_010_005', 'setthescene_bedroom', \
-        'hypersim_ai_001_005', 'hypersim_ai_006_010', 'hypersim_ai_010_008', 'hypersim_ai_022_005', \
-        'setthescene_dining_room', 'setthescene_living_room', \
+        'setthescene_bedroom', 'setthescene_dining_room', 'setthescene_living_room',
+        'hypersim_ai_001_005', 'hypersim_ai_006_010', 'hypersim_ai_010_005', 'hypersim_ai_010_008', 'hypersim_ai_022_005', \
+        'bedroom_0000', 'bedroom_0001', 'bedroom_0002', 'bedroom_0003', 'bedroom_0004', 'livingroom_8013', 'livingroom_8016', 'livingroom_8017', \
+        'fankenstein_bedroom_001',
     ]
     scene_types = [
-        'bedrooms', 'bedrooms',
-        'living_rooms', 'living_rooms', 'living_rooms', 'living_rooms', \
-        'living_rooms', 'living_rooms'
+        'bedrooms', 'living_rooms', 'living_rooms', \
+        'living_rooms', 'living_rooms', 'bedrooms', 'living_rooms', 'living_rooms', \
+        'bedrooms', 'bedrooms', 'bedrooms', 'bedrooms', 'bedrooms', 'living_rooms', 'living_rooms', 'living_rooms', \
+        'bedrooms',
     ]
 
     for scene_name, scene_type in zip(scene_names, scene_types):
         layout_path = f'../../../data/layout/{scene_name}/layout.json'
-        output_path = f'layout_cc3d_format/{scene_type}/{scene_name}'
+        output_path = f'../../../relatedworks/cc3d/layout_cc3d_format/{scene_type}/{scene_name}'
         scene_scale = 0.8
 
         print(scene_name)
         convert(layout_path, scene_name, scene_type, scene_scale, output_path)
 
-    # debug
-    # load_cc3d_layout()
-    # load_cc3d_layout('layout_cc3d_format/living_rooms/setthescene_living_room/labels/setthescene_living_room/boxes.npz')
+        # debug
+        # load_cc3d_layout(osp.join(output_path, 'labels', scene_name, 'boxes.npz'))
+
+    print('DONE')
