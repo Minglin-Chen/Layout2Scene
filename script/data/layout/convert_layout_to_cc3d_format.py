@@ -318,13 +318,13 @@ if __name__=='__main__':
     # configuration
     scene_names = [\
         'setthescene_bedroom', 'setthescene_dining_room', 'setthescene_living_room',
-        'hypersim_ai_001_005', 'hypersim_ai_006_010', 'hypersim_ai_010_005', 'hypersim_ai_010_008', 'hypersim_ai_022_005', \
+        'hypersim_ai_001_005', 'hypersim_ai_003_004', 'hypersim_ai_006_010', 'hypersim_ai_010_005', 'hypersim_ai_010_008', 'hypersim_ai_022_005', \
         'bedroom_0000', 'bedroom_0001', 'bedroom_0002', 'bedroom_0003', 'bedroom_0004', 'livingroom_8013', 'livingroom_8016', 'livingroom_8017', \
         'fankenstein_bedroom_001',
     ]
     scene_types = [
         'bedrooms', 'living_rooms', 'living_rooms', \
-        'living_rooms', 'living_rooms', 'bedrooms', 'living_rooms', 'living_rooms', \
+        'living_rooms', 'bedrooms', 'living_rooms', 'bedrooms', 'living_rooms', 'living_rooms', \
         'bedrooms', 'bedrooms', 'bedrooms', 'bedrooms', 'bedrooms', 'living_rooms', 'living_rooms', 'living_rooms', \
         'bedrooms',
     ]

@@ -6,39 +6,32 @@ import yaml
 import trimesh
 import json
 
+import shutil
+
 
 if __name__=='__main__':
     # configuration
-    # - bedroom: 
-    #   hypersim_ai_010_005, setthescene_bedroom
-    # - livingroom: 
-    #   hypersim_ai_001_005, hypersim_ai_006_010, hypersim_ai_010_008, hypersim_ai_022_005, 
-    #   setthescene_dining_room, setthescene_living_room
-
-    scene_names = [\
-        'hypersim_ai_010_005', 'setthescene_bedroom', \
-        'hypersim_ai_001_005', 'hypersim_ai_006_010', 'hypersim_ai_010_008', 'hypersim_ai_022_005', \
-        'setthescene_dining_room', 'setthescene_living_room', \
+    scene_names = [
+        'setthescene_bedroom', 'setthescene_dining_room', 'setthescene_garage', 'setthescene_living_room',
+        'hypersim_ai_001_001', 'hypersim_ai_001_003', 'hypersim_ai_001_005', 'hypersim_ai_003_004', 'hypersim_ai_006_010', 'hypersim_ai_010_005', 'hypersim_ai_010_008', 'hypersim_ai_022_005', \
+        'bedroom_0000', 'bedroom_0001', 'bedroom_0002', 'bedroom_0003', 'bedroom_0004', 'livingroom_8013', 'livingroom_8016', 'livingroom_8017', \
+        'fankenstein_bedroom_001',
     ]
     scene_types = [
-        'bedrooms', 'bedrooms',
-        'living_rooms', 'living_rooms', 'living_rooms', 'living_rooms', \
-        'living_rooms', 'living_rooms'
+        'bedroom', 'dining room', 'garage', 'living room', \
+        'bathroom', 'office', 'dining room', 'bedroom', 'dining room', 'bedroom', 'living room', 'living room', \
+        'bedroom', 'bedroom', 'bedroom', 'bedroom', 'bedroom', 'living room', 'living room', 'living room', \
+        'bedroom',
     ]
 
     for scene_name, scene_type in zip(scene_names, scene_types):
         layout_path = f'../../../data/layout/{scene_name}/layout.json'
-        output_path = f'layout_setthescene_format/{scene_name}'
+        output_path = f'../../../relatedworks/Set-the-Scene/layout_setthescene_format/{scene_name}'
         os.makedirs(output_path, exist_ok=True)
 
         print(scene_name)
 
-        if scene_type == 'bedrooms':
-            scene_prompt = 'a modern style bedroom'
-        elif scene_type == 'living_rooms':
-            scene_prompt = 'a modern style living room'
-        else:
-            raise NotImplementedError
+        scene_prompt = 'a modern style ' + scene_type
 
         # load layout
         with open(layout_path, 'r') as f:
@@ -68,14 +61,16 @@ if __name__=='__main__':
 
             nerf_ids.append(b_name)
             shape_scales.append(max(b['size']))
-            shape_paths.append(shape_path)
+            shape_paths.append(
+                osp.join('layout_setthescene_format', scene_name, b_name+'.obj').replace("\\", "/")
+            )
             nerf_texts.append(b['prompt'])
 
         # room
         room_mesh = trimesh.util.concatenate([
-            trimesh.Trimesh(vertices=np.array(background['vertices'])[...,[1,2,0]], faces=np.array(background['faces']['ceiling'])),
+            # trimesh.Trimesh(vertices=np.array(background['vertices'])[...,[1,2,0]], faces=np.array(background['faces']['ceiling'])),
             trimesh.Trimesh(vertices=np.array(background['vertices'])[...,[1,2,0]], faces=np.array(background['faces']['floor'])),
-            trimesh.Trimesh(vertices=np.array(background['vertices'])[...,[1,2,0]], faces=np.array(background['faces']['walls'])),
+            # trimesh.Trimesh(vertices=np.array(background['vertices'])[...,[1,2,0]], faces=np.array(background['faces']['walls'])),
         ])
         room_bbox       = room_mesh.bounds
         room_position   = (room_bbox[0] + room_bbox[1]) / 2
@@ -90,7 +85,9 @@ if __name__=='__main__':
 
         nerf_ids.append('room')
         shape_scales.append(max(room_size.tolist()))
-        shape_paths.append(room_path)
+        shape_paths.append(
+            osp.join('layout_setthescene_format', scene_name, 'room.obj').replace("\\", "/")
+        )
         nerf_texts.append('walls of a room')
 
         # save
@@ -115,12 +112,17 @@ if __name__=='__main__':
             },
             'optim': {
                 'iters': 15000,
-                'device': 'cuda:0'
+                'device': 'cuda:0',
+                'resume': True
             }
         }
 
         config_path = osp.join(output_path, 'config.yaml')
         with open(config_path, "w", encoding="utf-8") as f:
             yaml.dump(config_dict, f, allow_unicode=True)
+
+        # camera
+        cameras_path = osp.join(osp.dirname(layout_path), 'cameras.json')
+        shutil.copy(cameras_path, output_path)
 
     print('DONE')
