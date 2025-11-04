@@ -2,3 +2,7 @@ Bohemian
 Baroque
 French country
 Japanese
+Midcentury
+traditional
+modern
+classic
