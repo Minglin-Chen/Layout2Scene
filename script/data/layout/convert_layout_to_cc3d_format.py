@@ -90,7 +90,7 @@ def convert(layout_path, scene_name, scene_type, scene_scale, output_path):
     # cv2.imshow('layout topdown', layout_topdown[0])
     # cv2.waitKey(1)
 
-    # draw othres
+    # draw others
     class_labels, translations, sizes, angles = [], [], [], []
 
     if scene_type == 'bedrooms':

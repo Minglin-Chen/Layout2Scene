@@ -94,6 +94,7 @@ def convert(layout_path, cameras_path, scene_type, scene_name, template_path, ou
     with open(cameras_output_path,'w') as f:
         json.dump(cameras, f, indent=2)
 
+    return mn, mx
 
 if __name__=='__main__':
     # configuration
@@ -113,6 +114,8 @@ if __name__=='__main__':
     output_dir = f'../../../relatedworks/GALA3D-main/layout_gala3d_format'
     os.makedirs(output_dir, exist_ok=True)
 
+    scene_bbox = {}
+
     for scene_name, scene_type in zip(scene_names, scene_types):
         layout_path     = f'../../../data/layout/{scene_name}/layout.json'
         cameras_path    = f'../../../data/layout/{scene_name}/cameras.json'
@@ -121,5 +124,14 @@ if __name__=='__main__':
         assert osp.exists(layout_path) and osp.exists(cameras_path) and osp.exists(template_path)
 
         print(scene_name)
-        convert(layout_path, cameras_path, scene_type, scene_name, template_path, output_dir)
+        bbox_min, bbox_max = \
+            convert(layout_path, cameras_path, scene_type, scene_name, template_path, output_dir)
+        
+        scene_bbox[scene_name] = {
+            'min': bbox_min.tolist(),
+            'max': bbox_max.tolist()
+        }
+    
+    with open('gala3d_format_meta.json', 'w') as f:
+        json.dump(scene_bbox, f, indent=2)
     
