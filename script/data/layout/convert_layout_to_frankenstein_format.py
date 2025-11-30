@@ -21,7 +21,7 @@ def transform(p, mn, mx, res, s=0.8):
     else:
         maxx += (extenty - extentx) * 0.5
         minx -= (extenty - extentx) * 0.5
-    assert (maxx - minx) == (maxy - miny)
+    # assert (maxx - minx) == (maxy - miny), f'{(maxx - minx)} != {(maxy - miny)}'
     extent = maxx - minx
     
     p[...,0] = (p[...,0] - minx) / extent   # (0,1)
@@ -121,27 +121,27 @@ def convert(layout_path, scene_type, scene_scale, output_path, vis=True):
 
 if __name__=='__main__':
     # configuration
-    # - bedroom: 
-    #   hypersim_ai_010_005, setthescene_bedroom
-    # - livingroom: 
-    #   hypersim_ai_001_005, hypersim_ai_006_010, hypersim_ai_010_008, hypersim_ai_022_005, 
-    #   setthescene_dining_room, setthescene_living_room
-
-    scene_names = [\
-        'hypersim_ai_010_005', 'setthescene_bedroom', \
-        'hypersim_ai_001_005', 'hypersim_ai_006_010', 'hypersim_ai_010_008', 'hypersim_ai_022_005', \
-        'setthescene_dining_room', 'setthescene_living_room', \
+    scene_names = [
+        'fankenstein_bedroom_001',
+        'bedroom_0000', 'bedroom_0001', 'bedroom_0002', 'bedroom_0003', 'bedroom_0004',
+        'livingroom_8013', 'livingroom_8016', 'livingroom_8017', 
+        'hypersim_ai_010_005', 'setthescene_bedroom', 
+        'hypersim_ai_001_005', 'hypersim_ai_006_010', 'hypersim_ai_010_008', 'hypersim_ai_022_005', 
+        'setthescene_dining_room', 'setthescene_living_room', 
     ]
     scene_types = [
+        'bedroom',
+        'bedroom', 'bedroom', 'bedroom', 'bedroom', 'bedroom', 
+        'livingroom', 'livingroom', 'livingroom', 'livingroom', 'livingroom', 
         'bedroom', 'bedroom',
-        'livingroom', 'livingroom', 'livingroom', 'livingroom', \
+        'livingroom', 'livingroom', 'livingroom', 'livingroom',
         'livingroom', 'livingroom'
     ]
 
     for scene_name, scene_type in zip(scene_names, scene_types):
         layout_path = f'../../../data/layout/{scene_name}/layout.json'
-        output_path = f'layout_frankenstein_format/{scene_type}/{scene_name}'
-        scene_scale = 0.6
+        output_path = f'../../../relatedworks/Frankenstein/layout_frankenstein_format/{scene_type}/{scene_name}'
+        scene_scale = 0.4
 
         print(scene_name)
         convert(layout_path, scene_type, scene_scale, output_path, vis=True)

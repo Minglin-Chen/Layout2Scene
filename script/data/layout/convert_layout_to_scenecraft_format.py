@@ -61,7 +61,10 @@ ade20k_to_nyu40_label_alias = {
     'television receiver':  'television',
     'bookcase':             'bookshelf',
     'book':                 'books',
-    'rug':                  'otherprop'
+    'rug':                  'otherprop',
+    'car':                  'unlabeled',
+    'barrel':               'unlabeled',
+    'chest of drawers':     'cabinet',
 }
 
 
@@ -285,15 +288,18 @@ def convert(layout_path, scene_type, scene_name, output_path):
 
 if __name__=='__main__':
     # configuration
+    # error in 'livingroom_8013', 'livingroom_8016'
     scene_names = [
-        'hypersim_ai_001_001', 'hypersim_ai_010_005', 'setthescene_bedroom', 
-        'hypersim_ai_001_005', 'hypersim_ai_006_010', 'hypersim_ai_010_008', 'hypersim_ai_022_005', 
-        'setthescene_dining_room', 'setthescene_living_room', 
+        'setthescene_bedroom', 'setthescene_dining_room', 'setthescene_garage', 'setthescene_living_room',
+        'hypersim_ai_001_001', 'hypersim_ai_001_003', 'hypersim_ai_001_005', 'hypersim_ai_003_004', 'hypersim_ai_006_010', 'hypersim_ai_010_005', 'hypersim_ai_010_008', 'hypersim_ai_022_005', \
+        'bedroom_0000', 'bedroom_0001', 'bedroom_0002', 'bedroom_0003', 'bedroom_0004', 'livingroom_8017', \
+        'fankenstein_bedroom_001',
     ]
     scene_types = [
-        'bathroom', 'bedrooms', 'bedrooms',
-        'living_rooms', 'living_rooms', 'living_rooms', 'living_rooms', 
-        'living_rooms', 'living_rooms'
+        'bedroom', 'dining room', 'garage', 'living room', \
+        'bathroom', 'office', 'dining room', 'bedroom', 'dining room', 'bedroom', 'living room', 'living room', \
+        'bedroom', 'bedroom', 'bedroom', 'bedroom', 'bedroom', 'living room', \
+        'bedroom',
     ]
 
     for scene_name, scene_type in zip(scene_names, scene_types):
