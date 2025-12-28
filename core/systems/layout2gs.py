@@ -159,31 +159,68 @@ class Layout2GS(BaseLift3DSystem):
 
     def training_step(self, batch):
         # rendering
+        # strategy v1 (mutually inclusive)
+        # local, local_index, batch_local = False, None, None
+        # if 'local' in batch.keys():
+        #     batch_local = batch.pop('local')
+        #     local       = True
+        #     if not _distributed_available():
+        #         local_index = np.random.randint(self.geometry.num_instance)
+        #     else:
+        #         local_index = \
+        #             (self.true_global_step * torch.distributed.get_world_size() + get_rank()) % self.geometry.num_instance
+        #     batch_local.update({'local': local, 'local_index': local_index})
+            
+        # out         = self(batch)
+        # out_local   = self(batch_local) if local else None
+        
+        # if self.is_gaussian_geometry:
+        #     self.viewspace_points   = [out['viewspace_points']]
+        #     self.radii              = [out['radii']]
+        #     self.local_masks        = [out['local_masks']]
+        #     self.image_sizes        = [(batch['height'], batch['width'])]
+
+        #     if local:
+        #         self.viewspace_points.append(out_local['viewspace_points'])
+        #         self.radii.append(out_local['radii'])
+        #         self.local_masks.append(out_local['local_masks'])
+        #         self.image_sizes.append((batch_local['height'], batch_local['width']))
+
+        # out         = self(batch)
+        # out_local   = self(batch_local) if local else None
+
+        # if self.is_gaussian_geometry:
+        #     self.viewspace_points   = [out['viewspace_points']]
+        #     self.radii              = [out['radii']]
+        #     self.local_masks        = [out['local_masks']]
+        #     self.image_sizes        = [(batch['height'], batch['width'])]
+
+        #     if local:
+        #         self.viewspace_points.append(out_local['viewspace_points'])
+        #         self.radii.append(out_local['radii'])
+        #         self.local_masks.append(out_local['local_masks'])
+        #         self.image_sizes.append((batch_local['height'], batch_local['width']))
+
+        # strategy v2 (mutually exclusive)
         local, local_index, batch_local = False, None, None
         if 'local' in batch.keys():
             batch_local = batch.pop('local')
-            local       = True
-            if not _distributed_available():
-                local_index = np.random.randint(self.geometry.num_instance)
-            else:
-                local_index = \
-                    (self.true_global_step * torch.distributed.get_world_size() + get_rank()) % self.geometry.num_instance
-            batch_local.update({'local': local, 'local_index': local_index})
+            N           = self.geometry.num_instance + 1
+            index       = np.random.randint(N) if not _distributed_available() else (self.true_global_step * torch.distributed.get_world_size() + get_rank()) % N
+            local       = index < self.geometry.num_instance
+            local_index = index if local else None
             
-        out         = self(batch)
+            if local:
+                batch_local.update({'local': local, 'local_index': local_index})
+            
+        out         = self(batch) if not local else None
         out_local   = self(batch_local) if local else None
         
         if self.is_gaussian_geometry:
-            self.viewspace_points   = [out['viewspace_points']]
-            self.radii              = [out['radii']]
-            self.local_masks        = [out['local_masks']]
-            self.image_sizes        = [(batch['height'], batch['width'])]
-
-            if local:
-                self.viewspace_points.append(out_local['viewspace_points'])
-                self.radii.append(out_local['radii'])
-                self.local_masks.append(out_local['local_masks'])
-                self.image_sizes.append((batch_local['height'], batch_local['width']))
+            self.viewspace_points   = [out['viewspace_points'] if not local else out_local['viewspace_points']]
+            self.radii              = [out['radii'] if not local else out_local['radii']]
+            self.local_masks        = [out['local_masks'] if not local else out_local['local_masks']]
+            self.image_sizes        = [(batch['height'], batch['width']) if not local else (batch_local['height'], batch_local['width'])]
 
         # prompt
         prompt_utils = self.prompt_utils \
@@ -287,7 +324,7 @@ class Layout2GS(BaseLift3DSystem):
         return {"loss": loss}
 
     def __guidance_step(self, batch, out, prompt_utils, loss, guidance_eval):
-        if self.guidance is None: return loss
+        if (batch is None) or (out is None) or (self.guidance is None): return loss
 
         if self.cfg.mode == 'appearance':
             guidance_out = self.guidance(
@@ -339,7 +376,7 @@ class Layout2GS(BaseLift3DSystem):
         return loss
 
     def __geometry_guidance_step(self, batch, out, prompt_utils, loss, guidance_eval):
-        if self.geometry_guidance is None: return loss
+        if (batch is None) or (out is None) or (self.geometry_guidance is None): return loss
         assert self.cfg.mode == 'geometry'
 
         guidance_in = torch.cat((out['comp_normal'], out['comp_depth']), dim=-1)
@@ -375,7 +412,7 @@ class Layout2GS(BaseLift3DSystem):
         return torch.cat(collect_inputs, dim=-1) if concat else collect_inputs
 
     def __ctrl_geometry_guidance_step(self, batch, out, prompt_utils, loss, guidance_eval):
-        if self.ctrl_geometry_guidance is None: return loss
+        if (batch is None) or (out is None) or (self.ctrl_geometry_guidance is None): return loss
         assert self.cfg.mode == 'geometry'
 
         guidance_in = torch.cat((out['comp_normal'], out['comp_depth']), dim=-1)
@@ -409,7 +446,7 @@ class Layout2GS(BaseLift3DSystem):
         return loss
 
     def __ctrl_appearance_guidance_step(self, batch, out, prompt_utils, loss, guidance_eval):
-        if self.ctrl_appearance_guidance is None: return loss
+        if (batch is None) or (out is None) or (self.ctrl_appearance_guidance is None): return loss
         assert self.cfg.mode == 'appearance'
 
         guidance_out = self.ctrl_appearance_guidance(
@@ -432,7 +469,7 @@ class Layout2GS(BaseLift3DSystem):
         return loss
 
     def __local_geometry_guidance_step(self, batch, out, prompt_utils, loss, guidance_eval):
-        if self.local_geometry_guidance is None: return loss
+        if (batch is None) or (out is None) or (self.local_geometry_guidance is None): return loss
         assert self.cfg.mode == 'geometry'
 
         guidance_in = torch.cat((out['comp_normal'], out['comp_depth']), dim=-1)
@@ -465,7 +502,7 @@ class Layout2GS(BaseLift3DSystem):
         return loss
 
     def __local_appearance_guidance_step(self, batch, out, prompt_utils, loss, guidance_eval):
-        if self.local_appearance_guidance is None: return loss
+        if (batch is None) or (out is None) or (self.local_appearance_guidance is None): return loss
         assert self.cfg.mode == 'appearance'
 
         guidance_out = self.local_appearance_guidance(

@@ -72,7 +72,7 @@ def camera_location_sampling_grid(bounds, unit=None):
             (bounds[1][0] - bounds[0][0]),
             (bounds[1][1] - bounds[0][1]),
             (bounds[1][2] - bounds[0][2])
-        ) / 10
+        ) / 20
     x = np.arange(bounds[0][0]+unit*0.5, bounds[1][0], unit)
     y = np.arange(bounds[0][1]+unit*0.5, bounds[1][1], unit)
     z = np.arange(bounds[0][2]+unit*0.5, bounds[1][2], unit)
@@ -93,7 +93,7 @@ def camera_orientation_calculation(
 ):
     camera_locations    = torch.tensor(camera_locations, dtype=torch.float32, device=device)
     bbox_locations      = torch.tensor(bbox_locations, dtype=torch.float32, device=device)
-    camera_fov_rad      = math.radians(camera_fov_deg)
+    # camera_fov_rad      = math.radians(camera_fov_deg)
 
     # (n_camera, n_bbox, 3)
     v_cam2box           = F.normalize(bbox_locations[None,:,:] - camera_locations[:,None,:], dim=-1)
@@ -101,7 +101,7 @@ def camera_orientation_calculation(
     # weights (n_camera, n_bbox)
     d_cam2box           = torch.norm(bbox_locations[None,:,:] - camera_locations[:,None,:], dim=-1)
     # weights             = 1. / d_cam2box
-    weights             = torch.exp(- gamma * d_cam2box)
+    weights             = torch.exp(gamma * d_cam2box)
 
     # variable
     n_camera            = v_cam2box.shape[0]
@@ -115,17 +115,19 @@ def camera_orientation_calculation(
         # (n_camera, n_bbox)
         cosine_similarity = torch.sum(v_cam2box * F.normalize(v_lookat[:,None,:], dim=-1), dim=-1)
 
-        loss = weights * torch.sigmoid(cosine_similarity - math.cos(camera_fov_rad * 0.5))
-        loss = torch.sum(loss)
-        loss = - loss
+        # loss = weights * torch.sigmoid(cosine_similarity - math.cos(camera_fov_rad * 0.5))
+        loss_focus  = torch.sum(weights * (1. - cosine_similarity))
+        # loss_reg    = torch.sum(v_lookat[:,2] ** 2)
+        # loss_total  = loss_focus + loss_reg
+        loss_total = loss_focus
 
         optimizer.zero_grad()
-        loss.backward()
+        loss_total.backward()
         optimizer.step()
 
         # finish condition
         if prev_loss is not None:
-            if abs(loss.item() - prev_loss) < tolerance:
+            if abs(loss_total.item() - prev_loss) < tolerance:
                 no_change_count += 1
             else:
                 no_change_count = 0
@@ -133,7 +135,7 @@ def camera_orientation_calculation(
             if no_change_count >= patience:
                 break
 
-        prev_loss = loss.item()
+        prev_loss = loss_total.item()
 
     # (n_camera, 3)
     v_lookat = F.normalize(v_lookat, dim=-1)
@@ -150,6 +152,12 @@ if __name__=='__main__':
     # 2.1 camera location sampling within the bounds
     bounds = background_mesh.bounds
     camera_locations = camera_location_sampling_grid(bounds)
+
+    z_min, z_max = bounds[0,2], bounds[1,2]
+    z_min_valid = (z_max - z_min) * 0.5 + z_min
+    z_max_valid = (z_max - z_min) * 0.7 + z_min
+    mask = (camera_locations[:,2] >= z_min_valid) & (camera_locations[:,2] <= z_max_valid)
+    camera_locations = camera_locations[mask]
 
     # 2.2 camera distance to the nearest plane
     # compute signed-distance-field (SDF)

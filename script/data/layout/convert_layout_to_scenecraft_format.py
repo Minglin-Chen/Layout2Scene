@@ -69,7 +69,7 @@ ade20k_to_nyu40_label_alias = {
 
 
 def face_normal(vertices, face):
-    v0, v1, v2 = vertices[face]
+    v0, v1, v2 = vertices[face][:3]
     return np.cross(v1 - v0, v2 - v0)
 
 def triangles_to_quads(vertices, faces, angle_threshold=1.0):
@@ -139,7 +139,7 @@ def convert_background(background):
 
     wall_faces  = np.array(background['faces']['walls'])
     wall_quad, wall_tri = triangles_to_quads(bg_vertices, wall_faces)
-    assert len(wall_tri) == 0
+    # assert len(wall_tri) == 0
 
     bboxes, labels, thetas = [], [], []
 

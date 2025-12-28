@@ -31,6 +31,8 @@ class TexturedMeshExporter(Exporter):
         texture_size: int = 2048
         context_type: str = "cuda"
 
+        material_strategy: str = 'sample'
+
         # padding_size: int = 8
 
     cfg: Config
@@ -68,7 +70,13 @@ class TexturedMeshExporter(Exporter):
                 if not self.cfg.save_texture:
                     mesh.visual = trimesh.visual.TextureVisuals(uv=v_uv_ori.detach().cpu().numpy())
                 else:
-                    material = self.extract_material(v_pos, v_uv, v_uv_ori, t_idx)
+                    if self.cfg.material_strategy == 'extract':
+                        material = self.extract_material(v_pos, v_uv, v_uv_ori, t_idx)
+                    elif self.cfg.material_strategy == 'sample':
+                        material = self.sample_material(i, n_instance)
+                    else:
+                        raise NotImplementedError
+                        
                     mesh.visual = trimesh.visual.TextureVisuals(
                         uv=v_uv_ori.detach().cpu().numpy(), material=material)
         
@@ -151,6 +159,63 @@ class TexturedMeshExporter(Exporter):
             raise NotImplementedError
 
         mat_out = self.material.export(**geo_out)
+
+        map_Kd, map_Pm, map_Pr, map_Bump = None, None, None, None
+        if "albedo" in mat_out:
+            map_Kd = uv_padding(mat_out["albedo"])
+        else:
+            threestudio.warn(
+                "save_texture is True but no albedo texture found, using default white texture"
+            )
+        if "metallic" in mat_out:
+            map_Pm = uv_padding(mat_out["metallic"])
+        if "roughness" in mat_out:
+            map_Pr = uv_padding(mat_out["roughness"])
+        if "bump" in mat_out:
+            map_Bump = uv_padding(mat_out["bump"])
+
+        if map_Kd is not None:
+            material.baseColorTexture = Image.fromarray(map_Kd)
+        if (map_Pm is not None) and (map_Pr is not None):
+            material.metallicRoughnessTexture = Image.fromarray(
+                np.concatenate([map_Pm, map_Pr], axis=-1))
+        if map_Bump is not None:
+            assert not self.cfg.save_normal
+            material.normalTexture = Image.fromarray(map_Bump)
+
+        return material
+    
+    def sample_material(self, i, n):
+        assert self.geometry.cfg.texture_type == 'field2d'
+
+        material = trimesh.visual.material.PBRMaterial(
+            baseColorFactor=[1.0, 1.0, 1.0],
+            metallicFactor=0.0,
+            roughnessFactor=1.0,
+        )
+
+        device = self.geometry.v_pos.device
+
+        coords  = torch.linspace(0., 1., steps=self.cfg.texture_size, device=device)
+        xx, yy  = torch.meshgrid(coords, coords, indexing='xy')
+        uv      = torch.stack((xx, 1-yy), dim=-1)
+        uv      = uv_packing(uv, i, n)
+
+        geo_out = self.geometry.export(points=uv)
+        mat_out = self.material.export(**geo_out)
+
+        def uv_padding(image):
+            inpaint_image = (image.detach().cpu().numpy() * 255).astype(np.uint8)
+            # uv_padding_size = self.cfg.padding_size
+            # inpaint_image = (
+            #     cv2.inpaint(
+            #         (image.detach().cpu().numpy() * 255).astype(np.uint8),
+            #         (hole_mask.detach().cpu().numpy() * 255).astype(np.uint8),
+            #         uv_padding_size,
+            #         cv2.INPAINT_TELEA,
+            #     )
+            # )
+            return inpaint_image
 
         map_Kd, map_Pm, map_Pr, map_Bump = None, None, None, None
         if "albedo" in mat_out:
