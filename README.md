@@ -95,7 +95,7 @@ The project provides some example layout files in the `data/layout/` directory.
 
 The layout can be easily designed in Blender with our addon [[link](https://github.com/Minglin-Chen/BlenderGen3D#)], and then export the layout files. An example video is as follows:
 
-[![Layout Design Video](https://img.youtube.com/vi/https://youtu.be/e2DD_puG01M/0.jpg)](https://www.youtube.com/watch?v=[YOUR_VIDEO_ID](https://youtu.be/e2DD_puG01M))
+[![Layout Design Video](https://img.youtube.com/vi/e2DD_puG01M/0.jpg)](https://www.youtube.com/watch?v=e2DD_puG01M)
 
 ### 📷 Camera Sampling
 
@@ -121,13 +121,11 @@ Thanks to all contributors and the open-source community for their support.
 If you use this project in your research, please cite the following paper:
 
 ```bibtex
-@article{chen2024layout2scene,
-  @article{chen2025layout2scene,
+@article{chen2025layout2scene,
   title={Layout2Scene: 3D semantic layout guided scene generation via geometry and appearance diffusion priors},
   author={Chen, Minglin and Wang, Longguang and Ao, Sheng and Zhang, Ye and Xu, Kai and Guo, Yulan},
   journal={arXiv preprint arXiv:2501.02519},
   year={2025}
-}
 }
 ```
 
