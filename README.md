@@ -3,7 +3,7 @@
 [[Project Page](https://minglin-chen.github.io/Layout2Scene/index.html)] [[Models](https://huggingface.co/mlchen/Layout2Scene/tree/main)]
 
 
-TL;DR: Layout2Scene is a layout-based indoor scene generation framework that generates 3D scene from human-provided layout and text prompts.
+**TL;DR**: **Layout2Scene** is a layout-based indoor scene generation framework that generates a 3D scene from human-provided **layout** and **style prompt**.
 
 ![Teaser](asset/teaser_github.jpg)
 
