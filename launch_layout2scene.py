@@ -68,7 +68,7 @@ def load_custom_module(module_path):
 
 
 def load_custom_modules():
-    node_paths = ["../../core"]
+    node_paths = ["./core"]
     node_import_times = []
     for custom_node_path in node_paths:
         possible_modules = os.listdir(custom_node_path)
