@@ -104,7 +104,7 @@ system:
   # ctrl_geometry_guidance:
   #   pretrained_model_name_or_path: "nexuslrf/nd-diffusion"
   #   controlnet_pretrained_model_name_or_path: ["../../checkpoint/LayoutGeoDiffusion"]
-  #   guidance_scale: 7.5
+  #   guidance_scale: 50.
   #   guidance_type: sds
   #   weighting_strategy: fantasia3d
   #   min_step_percent: [0, 0.98, 0.02, 4000] # ${trainer.max_steps}
