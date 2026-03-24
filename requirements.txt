@@ -3,8 +3,8 @@ omegaconf==2.3.0
 numpy==1.26.4
 jaxtyping==0.3.2
 typeguard
-# git+https://github.com/KAIR-BAIR/nerfacc.git@v0.5.2
-# git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/torch
+git+https://github.com/KAIR-BAIR/nerfacc.git@v0.5.2
+git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/torch
 diffusers==0.34.0
 transformers==4.40.0
 accelerate==1.8.1
@@ -13,7 +13,7 @@ tensorboard
 matplotlib
 imageio
 imageio[ffmpeg]
-# git+https://github.com/NVlabs/nvdiffrast.git@v0.3.3
+git+https://github.com/NVlabs/nvdiffrast.git@v0.3.3
 libigl==2.5.1
 xatlas==0.0.11
 trimesh[easy]
@@ -22,7 +22,7 @@ pysdf
 PyMCubes
 wandb
 gradio==4.11.0
-# git+https://github.com/ashawkey/envlight.git
+git+https://github.com/ashawkey/envlight.git
 torchmetrics==1.7.4
 
 
@@ -38,16 +38,16 @@ hf_transfer
 einops
 kornia
 taming-transformers-rom1504
-# git+https://github.com/openai/CLIP.git
+git+https://github.com/openai/CLIP.git
 
-#controlnet
+# controlnet
 controlnet_aux==0.0.10
 
 # layout2scene
-# git+https://gitlab.inria.fr/bkerbl/simple-knn.git
-# git+https://github.com/ashawkey/diff-gaussian-rasterization.git
-# git+https://github.com/hbb1/diff-surfel-rasterization.git
-# git+https://github.com/nerfstudio-project/gsplat.git@v1.5.3
+git+https://gitlab.inria.fr/bkerbl/simple-knn.git
+git+https://github.com/ashawkey/diff-gaussian-rasterization.git
+git+https://github.com/hbb1/diff-surfel-rasterization.git
+git+https://github.com/nerfstudio-project/gsplat.git@v1.5.3
 plyfile
 pymeshlab
 open-clip-torch==2.32.0
