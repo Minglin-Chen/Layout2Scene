@@ -14,7 +14,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 import warnings
-warnings.simplefilter(action='ignore', category=FutureWarning)
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", category=UserWarning)
 
 from threestudio.utils.ops import get_cam_info_gaussian
 from core.utils.gaussian_utils import load_gaussians

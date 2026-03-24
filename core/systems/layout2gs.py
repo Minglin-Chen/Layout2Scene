@@ -13,6 +13,7 @@ from threestudio.utils.misc import get_device, get_rank, _distributed_available,
 
 from core.utils.helper import *
 
+import torch.distributed as dist
 
 @threestudio.register("layout2gs-system")
 class Layout2GS(BaseLift3DSystem):
@@ -205,7 +206,7 @@ class Layout2GS(BaseLift3DSystem):
         local, local_index, batch_local = False, None, None
         if 'local' in batch.keys():
             batch_local = batch.pop('local')
-            N           = self.geometry.num_instance + 1
+            N           = self.geometry.num_instance + 1 if self.cfg.mode == 'appearance' else self.geometry.num_instance
             index       = np.random.randint(N) if not _distributed_available() else (self.true_global_step * torch.distributed.get_world_size() + get_rank()) % N
             local       = index < self.geometry.num_instance
             local_index = index if local else None

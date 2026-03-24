@@ -89,7 +89,7 @@ config_path = 'configs/scene_geometry.yaml'
 print(f'Scene geometry generation')
 max_steps = max(1000 * num_objects // n_gpus, 1000)
 os.system(f'\
-    torchrun --master_port 29509 --nproc_per_node={n_gpus} launch_layout2scene.py \
+    torchrun --nproc_per_node={n_gpus} launch_layout2scene.py \
         --config {config_path} --train --gpu {gpu_str} tag={scene_name} exp_root_dir="{output_root}" \
         data.global_camera.camera_path="{camera_path}" \
         system.geometry.init_file_path="{layout_path}" \
@@ -109,7 +109,7 @@ os.system(f'\
 ###################################
 # Scene - Mesh Extraction
 ###################################
-gaussian_file_path  = find_export_path(osp.join(output_root, 'scene_gs_geometry'), scene_name, 'gaussians', n_gpus > 1)
+gaussian_file_path  = find_export_path(osp.join(output_root, 'scene_geometry'), scene_name, 'gaussians', n_gpus > 1)
 volfusion_file_path = osp.join(osp.dirname(gaussian_file_path), osp.basename(gaussian_file_path).replace('gaussians', 'volfusion'))
 refined_file_path   = osp.join(osp.dirname(volfusion_file_path), osp.basename(volfusion_file_path).replace('volfusion', 'refined'))
 
@@ -132,7 +132,7 @@ max_steps = 30000
 
 print(f'Scene appearance generation')
 os.system(f'\
-    torchrun --master_port 29509 --nproc_per_node={n_gpus} launch_layout2scene.py \
+    torchrun --nproc_per_node={n_gpus} launch_layout2scene.py \
         --config {config_path} --train --gpu {gpu_str} tag={scene_name+"_"+style_prompt.replace(" ", "_")} exp_root_dir="{output_root}" \
         data.global_camera.camera_path="{camera_path}" \
         system.geometry.init_file_path="{refined_file_path}" \

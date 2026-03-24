@@ -75,13 +75,13 @@ system:
   prompt_processor:
     global_prompt_processor_type: "stable-diffusion-prompt-processor"
     global_prompt_processor:
-      # pretrained_model_name_or_path: "runwayml/stable-diffusion-v1-5"
-      pretrained_model_name_or_path: "stabilityai/stable-diffusion-2-1-base"
+      # pretrained_model_name_or_path: "stable-diffusion-v1-5/stable-diffusion-v1-5"
+      pretrained_model_name_or_path: "mlchen/stable-diffusion-2-1-base"
       prompt: ""
       negative_prompt: "deformed, extra digit, fewer digits, cropped, worst quality, low quality, smoke, shading, lighting, lumination, shadow, text in image, watermarks"
     local_prompt_processor_type: "stable-diffusion-prompt-processor"
     local_prompt_processor:
-      pretrained_model_name_or_path: "runwayml/stable-diffusion-v1-5"
+      pretrained_model_name_or_path: "stable-diffusion-v1-5/stable-diffusion-v1-5"
       negative_prompt: "deformed, extra digit, fewer digits, cropped, worst quality, low quality, smoke, shading, lighting, lumination, shadow, text in image, watermarks"
     local_prompt_init_strategy: "from_layout"
     local_prompt_init_file_path: ???
@@ -89,8 +89,8 @@ system:
 
   ctrl_appearance_guidance_type: "multi-controlnet-guidance"
   ctrl_appearance_guidance:
-    # pretrained_model_name_or_path: "runwayml/stable-diffusion-v1-5"
-    pretrained_model_name_or_path: "stabilityai/stable-diffusion-2-1-base"
+    # pretrained_model_name_or_path: "stable-diffusion-v1-5/stable-diffusion-v1-5"
+    pretrained_model_name_or_path: "mlchen/stable-diffusion-2-1-base"
     controlnet_pretrained_model_name_or_path: [
       "lllyasviel/control_v11p_sd15_seg", 
       "lllyasviel/control_v11p_sd15_normalbae", 
@@ -117,7 +117,7 @@ system:
 
   local_appearance_guidance_type: "multi-controlnet-guidance"
   local_appearance_guidance:
-    pretrained_model_name_or_path: "runwayml/stable-diffusion-v1-5"
+    pretrained_model_name_or_path: "stable-diffusion-v1-5/stable-diffusion-v1-5"
     controlnet_pretrained_model_name_or_path: [
       "lllyasviel/control_v11p_sd15_normalbae",
       # "lllyasviel/control_v11p_sd15_depth",

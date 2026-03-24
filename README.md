@@ -27,20 +27,35 @@ cd Layout2Scene
 ### Environment Setup
 
 ```bash
-conda create -n layout2scene python==3.11
+apt install libgl1-mesa-glx libegl1-mesa-dev libopengl0 libglm-dev libxrender1 libxi6 libxkbcommon0 libsm6
+
+conda create -n layout2scene python==3.10
 conda activate layout2scene
 
-# Install PyTorch (CUDA 11.8)
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
-pip install xformers --index-url https://download.pytorch.org/whl/cu118
-
-# Install dependencies
+# Install dependencies (Recommended version: PyTorch 2.3.0)
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
+pip install xformers --index-url https://download.pytorch.org/whl/cu124
 pip install -r requirements.txt
+
+# Install Blender 4.3.1
+wget https://download.blender.org/release/Blender4.3/blender-4.3.1-linux-x64.tar.xz
+tar -xvf blender-4.3.1-linux-x64.tar.xz
+mv blender-4.3.1-linux-x64 /opt/blender-4.3.1
+ln -s /opt/blender-4.3.1/blender /usr/local/bin/blender
 ```
 
 ### 📦 Pre-trained Weights Download
 
-The project requires downloading the pre-trained weights from [link](https://huggingface.co/mlchen/Layout2Scene/tree/main), then put it into folder `checkpoint`:
+The project requires downloading the pre-trained weights from [link](https://huggingface.co/mlchen/Layout2Scene/tree/main), then put it into folder `checkpoint`. You can download using the following:
+```bash
+pip install -U huggingface_hub
+pip install hf_transfer
+
+export HF_ENDPOINT=https://hf-mirror.com
+export HF_HUB_ENABLE_HF_TRANSFER=1
+
+hf download mlchen/Layout2Scene --local-dir checkpoint
+```
 
 ## 🚀 Usage
 
@@ -49,6 +64,11 @@ The project requires downloading the pre-trained weights from [link](https://hug
 Basic usage:
 
 ```bash
+(optional)
+export HF_ENDPOINT=https://hf-mirror.com
+export HF_HUB_ENABLE_HF_TRANSFER=1
+export OMP_NUM_THREADS=4
+
 python layout2scene.py \
     --layout data/layout/hypersim_ai_010_005/layout.json \
     --type bedroom \

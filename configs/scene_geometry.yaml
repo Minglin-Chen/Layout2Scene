@@ -90,12 +90,12 @@ system:
   geometry_prompt_processor:
     global_prompt_processor_type: "stable-diffusion-prompt-processor"
     global_prompt_processor:
-      pretrained_model_name_or_path: "runwayml/stable-diffusion-v1-5"
+      pretrained_model_name_or_path: "stable-diffusion-v1-5/stable-diffusion-v1-5"
       prompt: ""
       negative_prompt: "low quality"
     local_prompt_processor_type: "stable-diffusion-prompt-processor"
     local_prompt_processor:
-      pretrained_model_name_or_path: "runwayml/stable-diffusion-v1-5"
+      pretrained_model_name_or_path: "stable-diffusion-v1-5/stable-diffusion-v1-5"
       negative_prompt: "low quality"
     local_prompt_init_strategy: "from_layout"
     local_prompt_init_file_path: ???

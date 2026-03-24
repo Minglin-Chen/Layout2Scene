@@ -82,17 +82,17 @@ class MultiControlNetGuidance(BaseObject):
         )
 
         ctrlnet_model_name_or_path_list = self.cfg.controlnet_pretrained_model_name_or_path
-        if len(ctrlnet_model_name_or_path_list) == 1:
-            threestudio.info(f"from one file: {ctrlnet_model_name_or_path_list}")
-            controlnet = MultiControlNetModel.from_pretrained(
-                ctrlnet_model_name_or_path_list[0],
-                torch_dtype=self.weights_dtype)
-        else:
-            threestudio.info(f"from multiple files: {ctrlnet_model_name_or_path_list}")
-            controlnet = MultiControlNetModel([
-                ControlNetModel.from_pretrained(p, torch_dtype=self.weights_dtype) \
-                    for p in ctrlnet_model_name_or_path_list
-            ])
+        # if len(ctrlnet_model_name_or_path_list) == 1:
+        #     threestudio.info(f"from one file: {ctrlnet_model_name_or_path_list}")
+        #     controlnet = MultiControlNetModel.from_pretrained(
+        #         ctrlnet_model_name_or_path_list[0],
+        #         torch_dtype=self.weights_dtype)
+        # else:
+        #     threestudio.info(f"from multiple files: {ctrlnet_model_name_or_path_list}")
+        controlnet = MultiControlNetModel([
+            ControlNetModel.from_pretrained(p, torch_dtype=self.weights_dtype) \
+                for p in ctrlnet_model_name_or_path_list
+        ])
 
         pipe_kwargs = {
             "tokenizer": None,
